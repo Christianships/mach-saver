@@ -10,18 +10,6 @@ enum Art {
         "██║ ╚═╝ ██║██║  ██║╚██████╗██║  ██║",
         "╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝",
     ]
-
-    /// 5×7 dot letters for the jet's wings.
-    static let letters: [Character: [String]] = [
-        "M": ["#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"],
-        "A": [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-        "C": [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
-        "H": ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-    ]
-
-    /// MACH on the built-in jet: two letters per wing, placed by the dot at the
-    /// top-left of each pair (jet.txt coordinates). Upper wing, then lower wing.
-    static let jetWings: [(word: String, x: Int, y: Int)] = [("MA", 35, 8), ("CH", 32, 56)]
 }
 
 /// A logo as a grid of dots. Braille characters become their 2x4 dots, any
@@ -56,21 +44,5 @@ struct DotArt {
         points = raw.map { ($0.x - minX, $0.y - minY) }
         width = points.map(\.x).max()! + 1
         height = points.map(\.y).max()! + 1
-    }
-
-    /// Clears a box (one dot of margin) where each word goes, so the letters
-    /// don't run into the wing's own details, and returns the letter dots.
-    mutating func paint(_ words: [(word: String, x: Int, y: Int)]) -> [(x: Int, y: Int)] {
-        var out: [(x: Int, y: Int)] = []
-        for w in words {
-            let right = w.x + w.word.count * 6 - 1
-            points.removeAll { $0.x >= w.x - 1 && $0.x <= right && $0.y >= w.y - 1 && $0.y <= w.y + 7 }
-            for (i, ch) in w.word.enumerated() {
-                for (r, row) in (Art.letters[ch] ?? []).enumerated() {
-                    for (c, v) in row.enumerated() where v == "#" { out.append((w.x + i * 6 + c, w.y + r)) }
-                }
-            }
-        }
-        return out
     }
 }

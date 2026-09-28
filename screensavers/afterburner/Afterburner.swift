@@ -30,8 +30,8 @@ struct Fire {
     mutating func step(wind: Double, time: Double, rng: inout Rng) {
         // Uneven source so the flames form peaks instead of a flat wall.
         for x in 0..<cols {
-            let n = sin(Double(x) * 0.09 + time * 0.7) * 0.5 + sin(Double(x) * 0.031 - time * 0.4) * 0.5
-            let base = Double(Self.maxHeat) * (0.8 + 0.2 * n) - Double(rng.int(0...4))
+            let n = sin(Double(x) * 0.09 + time * 0.35) * 0.5 + sin(Double(x) * 0.031 - time * 0.2) * 0.5
+            let base = Double(Self.maxHeat) * (0.82 + 0.1 * n) - Double(rng.int(0...2))
             heat[x] = UInt8(max(0, min(Double(Self.maxHeat), base)))
         }
         // Top down, so each row reads last frame's row below it.
@@ -104,15 +104,16 @@ private struct TitleCell {
     let col: Int, row: Int
 }
 
-/// Afterburner: the jet, big and centred with MACH on its wings, above a field
-/// of ASCII fire with embers blowing in the wind. A custom logo has no wings,
-/// so it gets MACH in animated ASCII patterns beside it instead.
+/// Afterburner: a 3D jet in shaded ASCII, big and centred with MACH painted on
+/// its wings, banking gently over a field of calm ASCII fire. A custom logo
+/// (flat dot art) has no wings, so it gets MACH in animated ASCII patterns
+/// beside it instead.
 final class Afterburner: ScreensaverView {
     static let screensaver = Screensaver(
         id: "afterburner", title: "Afterburner",
         make: { frame in
             let (logo, isJet) = Settings.loadLogo()
-            return Afterburner(frame: frame, palette: Palette.named(Settings.palette), logo: logo, wings: isJet)
+            return Afterburner(frame: frame, palette: Palette.named(Settings.palette), logo: logo, jet: isJet ? Jet3D() : nil)
         },
         options: {
             let logoName = Settings.logoPath.map { ($0 as NSString).lastPathComponent } ?? "jet.txt (built in)"
@@ -142,7 +143,7 @@ final class Afterburner: ScreensaverView {
             set { d.set(newValue, forKey: "afterburner.logoPath") }
         }
 
-        /// The logo, and whether it's the built-in jet (which has wings for MACH).
+        /// The logo, and whether it's the built-in jet (drawn in 3D instead).
         static func loadLogo() -> (DotArt, isJet: Bool) {
             let bundled = Bundle.main.url(forResource: "jet", withExtension: "txt", subdirectory: "afterburner")
             for url in [logoPath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }, bundled] {
@@ -164,9 +165,14 @@ final class Afterburner: ScreensaverView {
     }
 
     private let palette: Palette
-    private var logo: DotArt
-    private var letters: [(x: Int, y: Int)] = []    // MACH on the jet's wings; empty = title beside the logo
-    private var letterReveal: [Double] = []
+    private let logo: DotArt
+    private let jet: Jet3D?                 // nil = flat logo with MACH beside it
+    private var jetFont: GlyphFont!
+    private var jetCols = 0, jetRows = 0
+    private var jetCell = SIMD2<Double>(1, 1)       // one character, in model units
+    private var jetCentre = SIMD2<Double>(0, 0)     // model origin, in grid cells
+    private var jetOrigin = CGPoint.zero            // top-left of the grid on screen
+    private var jetColReveal: [Double] = []
     private var rng = Rng(seed: UInt64(CACurrentMediaTime() * 1_000_000))
     private var clock = 0.0
     private var frameIndex = 0
@@ -200,10 +206,10 @@ final class Afterburner: ScreensaverView {
     private static let gradientSteps = 16, brightSteps = 5, titleLevels = 8
     private var patternFont: GlyphFont!
 
-    init(frame: NSRect, palette: Palette, logo: DotArt, wings: Bool) {
+    init(frame: NSRect, palette: Palette, logo: DotArt, jet: Jet3D?) {
         self.palette = palette
         self.logo = logo
-        if wings { letters = self.logo.paint(Art.jetWings) }
+        self.jet = jet
         fireColors = (0..<24).map { Palette.ramp(palette.fire, Double($0) / 23).cg() }
         shades = (0..<Self.brightSteps).map { b in
             (0..<Self.gradientSteps).map { g in
@@ -231,21 +237,30 @@ final class Afterburner: ScreensaverView {
 
         fireFont = GlyphFont(size: max(10, (H / 64).rounded()))
         let cols = Int(W / fireFont.advance) + 1, rows = Int(H / fireFont.lineHeight) + 1
-        let flameRows = max(6, Int(Double(rows) * 0.3))
+        let flameRows = max(6, Int(Double(rows) * 0.22))
         fire = Fire(cols: cols, rows: rows, flameRows: flameRows)
         flameTop = CGFloat(flameRows) * fireFont.lineHeight
 
-        if !letters.isEmpty {
-            // The jet alone, centred over the flames, as large as fits.
-            pitch = min(W * 0.72 / CGFloat(max(1, logo.width)), (H - flameTop) * 0.86 / CGFloat(max(1, logo.height)))
+        if let jet {
+            // The jet alone, centred over the flames, as large as fits while it banks.
+            jetFont = GlyphFont(size: max(7, (H / 100).rounded()))
+            let area = CGSize(width: W * 0.84, height: (H - flameTop) * 0.94)
+            let b = jet.bounds(Self.basePose)
+            let scale = min(area.width / b.width, area.height / b.height) * 0.9    // points per model unit
+            jetCols = Int(area.width / jetFont.advance)
+            jetRows = Int(area.height / jetFont.lineHeight)
+            jetCell = SIMD2(Double(jetFont.advance / scale), Double(jetFont.lineHeight / scale))
+            jetCentre = SIMD2(Double(jetCols) / 2 - Double(b.midX) / jetCell.x,
+                              Double(jetRows) / 2 + Double(b.midY) / jetCell.y)
+            let centerY = (flameTop + H) / 2 + H * 0.01
+            jetOrigin = CGPoint(x: (W - CGFloat(jetCols) * jetFont.advance) / 2,
+                                y: centerY + CGFloat(jetRows) * jetFont.lineHeight / 2)
+            logoOrigin = CGPoint(x: (W - b.width * scale) / 2, y: centerY + b.height * scale / 2)
+            logoSize = CGSize(width: b.width * scale, height: b.height * scale)
+            pitch = jetFont.lineHeight * 0.5
             gap = 0
-            logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
-            let centerY = (flameTop + H) / 2 + H * 0.02
-            logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: centerY + logoSize.height / 2)
             titleCells = []
-            dotReveal = logo.points.map { p in 0.3 + Double(p.x) / Double(max(1, logo.width)) * 1.1 + rng.range(0, 0.25) }
-            // Letters land once the jet has drawn in.
-            letterReveal = letters.map { _ in rng.range(1.7, 2.3) }
+            jetColReveal = (0..<jetCols).map { c in 0.3 + Double(c) / Double(max(1, jetCols)) * 1.2 + rng.range(0, 0.2) }
             return
         }
 
@@ -300,10 +315,11 @@ final class Afterburner: ScreensaverView {
         clock += dt
         frameIndex += 1
         let t = clock, w = wind(t)
-        fire.step(wind: w, time: t, rng: &rng)
+        // Calm fire: half the frame rate, and only a breath of the wind.
+        if frameIndex % 2 == 0 { fire.step(wind: w * 0.4, time: t, rng: &rng) }
 
         // Embers off the top of the flames.
-        for _ in 0..<Int(rng.range(0, 2.2)) {
+        for _ in 0..<Int(rng.range(0, 1.1)) {
             embers.append(Particle(x: rng.range(0, Double(bounds.width)), y: Double(flameTop) * rng.range(0.55, 1),
                                    vx: rng.range(-12, 12), vy: rng.range(35, 95), born: t, life: rng.range(1.5, 3.5),
                                    glyph: [".", "'", "*", "."][rng.int(0...3)], phase: rng.range(0, 6)))
@@ -313,14 +329,14 @@ final class Afterburner: ScreensaverView {
         if rng.unit() < dt * 10 {
             let x = Double(logoOrigin.x + logoSize.width * rng.range(0.1, 0.45))
             let vx = -rng.range(260, 460)
-            let stopX = Double(logoOrigin.x - (letters.isEmpty ? gap * 0.7 : bounds.width * 0.12))
+            let stopX = Double(logoOrigin.x - (jet == nil ? gap * 0.7 : bounds.width * 0.12))
             streaks.append(Particle(x: x, y: Double(logoOrigin.y - logoSize.height * rng.range(0.3, 0.72)),
                                     vx: vx, vy: 0, born: t, life: max(0.05, (x - stopX) / -vx),
                                     length: rng.range(18, 60)))
         }
 
         for i in embers.indices {
-            embers[i].x += (embers[i].vx + w * 45 + sin(t * 3 + embers[i].phase) * 10) * dt
+            embers[i].x += (embers[i].vx + w * 22 + sin(t * 2 + embers[i].phase) * 6) * dt
             embers[i].y += embers[i].vy * dt
         }
         for i in streaks.indices { streaks[i].x += streaks[i].vx * dt }
@@ -341,7 +357,7 @@ final class Afterburner: ScreensaverView {
         drawFire(ctx)
         drawParticles(ctx, embers, font: fireFont, t: t) { age in Palette.ramp(self.palette.fire, 1 - age * 0.7) }
         drawStreaks(ctx, t: t)
-        drawLogo(ctx, t: t)
+        if jet != nil { drawJet(ctx, t: t) } else { drawLogo(ctx, t: t) }
         if !titleCells.isEmpty { drawTitle(ctx, t: t) }
     }
 
@@ -419,19 +435,6 @@ final class Afterburner: ScreensaverView {
             let y = logoOrigin.y - CGFloat(d.y + 1) * pitch + bob
             paths[b][g].addRect(CGRect(x: x, y: y, width: size, height: size))
         }
-        // MACH on the wings: brighter than the jet, flashing white as each dot lands.
-        for (i, d) in letters.enumerated() {
-            let shown = t - letterReveal[i]
-            guard shown >= 0 else { continue }
-            let g = min(Self.gradientSteps - 1, d.y * Self.gradientSteps / max(1, logo.height))
-            let flash = max(0, 1 - shown / 0.5)
-            let dist = abs(Double(d.x) + Double(d.y) * 0.6 - sweep)
-            let shine = dist < 5 ? 1 - dist / 5 : 0
-            let b = max(2, min(Self.brightSteps - 1, Int((max(flash, shine) * Double(Self.brightSteps - 1)).rounded())))
-            let x = logoOrigin.x + CGFloat(d.x) * pitch + sway
-            let y = logoOrigin.y - CGFloat(d.y + 1) * pitch + bob
-            paths[b][g].addRect(CGRect(x: x, y: y, width: size, height: size))
-        }
         for b in paths.indices {
             for g in paths[b].indices where !paths[b][g].isEmpty {
                 ctx.setFillColor(shades[b][g])
@@ -439,6 +442,128 @@ final class Afterburner: ScreensaverView {
                 ctx.fillPath()
             }
         }
+    }
+
+    // MARK: - 3D jet
+
+    /// Three-quarter view from above and behind, nose up and to the right.
+    static let basePose = Jet3D.Pose(yaw: 14, pitch: 0, roll: 12)
+
+    private func pose(_ t: Double) -> Jet3D.Pose {
+        let p = Self.basePose
+        return Jet3D.Pose(yaw: p.yaw + 2 * sin(t * 0.37), pitch: p.pitch + 2 * sin(t * 0.29 + 1),
+                          roll: p.roll + 4 * sin(t * 0.45))
+    }
+
+    private static let hullRamp: [Character] = [".", ":", "-", "+", "x", "x", "x", "X", "#", "%"]
+    private static let canopyRamp: [Character] = [".", ":", "o", "o", "O", "0", "@"]
+
+    /// Line character for an outline, from which side the empty space is on.
+    private static func edgeChar(_ gx: Int, _ gy: Int) -> Character {
+        if gx == 0 && gy == 0 { return "+" }
+        if abs(gx) > 2 * abs(gy) { return "|" }
+        if abs(gy) > 2 * abs(gx) { return gy > 0 ? "-" : "_" }
+        return (gx > 0) == (gy > 0) ? "/" : "\\"
+    }
+
+    private func drawJet(_ ctx: CGContext, t: Double) {
+        guard let jet else { return }
+        let bob = CGFloat(sin(t * 0.9)) * jetFont.lineHeight * 0.6, sway = CGFloat(sin(t * 0.45)) * jetFont.advance * 1.5
+        let p = pose(t)
+        let f = jet.render(p, cols: jetCols, rows: jetRows, cellW: jetCell.x, cellH: jetCell.y, centre: jetCentre)
+        let font = jetFont!, cw = font.advance, ch = font.lineHeight
+        var batches = Batches(Self.gradientSteps * Self.titleLevels)
+        var fire = Batches(fireColors.count)
+        let sweepPeriod = 6.0
+        let span = Double(jetCols + jetRows * 2) + 30
+        let sweep = (t.truncatingRemainder(dividingBy: sweepPeriod) / sweepPeriod) * span - 15
+
+        // Afterburner plumes, drawn first so the jet covers their roots.
+        let rot = Jet3D.rotation(p)
+        for side in [1.0, -1.0] {
+            let a = Jet3D.project(SIMD3(-10.9, 0.58 * side, 0), rot), b = Jet3D.project(SIMD3(-13.6, 0.58 * side, 0), rot)
+            let steps = 14
+            for k in 0..<steps {
+                let u = Double(k) / Double(steps)
+                let flick = 0.75 + 0.25 * sin(t * 23 + Double(k) * 1.7 + side)
+                let r = 0.4 * (1 - u) * flick
+                let q = a + (b - a) * u
+                let gc = jetCentre.x + q.x / jetCell.x, gr = jetCentre.y - q.y / jetCell.y
+                let rc = r / jetCell.x, rr = r / jetCell.y
+                for dr in Int(-rr.rounded())...Int(rr.rounded()) { for dc in Int(-rc.rounded())...Int(rc.rounded()) {
+                    let c = Int(gc) + dc, rw = Int(gr) + dr
+                    guard c >= 0, c < jetCols, rw >= 0, rw < jetRows, f.part[f.index(c, rw)] == .none,
+                          t > jetColReveal[c] else { continue }
+                    let heat = (1 - u) * flick
+                    let glyph: Character = heat > 0.7 ? "#" : heat > 0.5 ? "*" : heat > 0.3 ? "=" : ":"
+                    let bucket = min(fireColors.count - 1, Int(heat * Double(fireColors.count - 1)))
+                    fire.add(bucket, font.glyph(glyph), CGPoint(x: jetOrigin.x + CGFloat(c) * cw + sway,
+                                                                y: jetOrigin.y - CGFloat(rw + 1) * ch + font.descent + bob))
+                }}
+            }
+        }
+
+        for r in 0..<jetRows {
+            let g = min(Self.gradientSteps - 1, r * Self.gradientSteps / max(1, jetRows))
+            for c in 0..<jetCols {
+                let i = f.index(c, r)
+                let part = f.part[i]
+                guard part != .none else { continue }
+                let shown = t - jetColReveal[c]
+                guard shown >= 0 else { continue }
+                let depth = f.depth[i]
+                // Outline where the surface ends or passes in front of something further back.
+                func open(_ dc: Int, _ dr: Int) -> Int {
+                    let c2 = c + dc, r2 = r + dr
+                    guard c2 >= 0, c2 < jetCols, r2 >= 0, r2 < jetRows else { return 1 }
+                    let j = f.index(c2, r2)
+                    return f.part[j] == .none || f.depth[j] < depth - 0.9 ? 1 : 0
+                }
+                var gx = 0, gy = 0, edges = 0
+                for dr in -1...1 { for dc in -1...1 where dr != 0 || dc != 0 {
+                    let o = open(dc, dr)
+                    gx -= o * dc; gy -= o * dr
+                    if (dr == 0 || dc == 0) && o == 1 { edges += 1 }
+                }}
+                var light = Double(f.light[i])
+                // A dark ring around each letter, so MACH reads like a decal.
+                var ring = false
+                if !f.letter[i] {
+                    for dr in -1...1 { for dc in -1...1 {
+                        let c2 = c + dc, r2 = r + dr
+                        if c2 >= 0, c2 < jetCols, r2 >= 0, r2 < jetRows, f.letter[f.index(c2, r2)] { ring = true }
+                    }}
+                }
+                let glyph: Character
+                if f.letter[i] {
+                    glyph = "#"
+                    light = 1
+                } else if ring {
+                    glyph = "."
+                    light = 0.1
+                } else if edges > 0 {
+                    glyph = Self.edgeChar(gx, gy)
+                    light = max(light, 0.55) + 0.15
+                } else if f.panel[i] {
+                    glyph = ":"
+                    light *= 0.55
+                } else if part == .canopy {
+                    glyph = Self.canopyRamp[min(Self.canopyRamp.count - 1, Int(light * Double(Self.canopyRamp.count)))]
+                } else {
+                    glyph = Self.hullRamp[min(Self.hullRamp.count - 1, Int(light * Double(Self.hullRamp.count)))]
+                }
+                // White flash as each column draws in, and a highlight sweeping across now and then.
+                let flash = max(0, 1 - shown / 0.35)
+                let dist = abs(Double(c) + Double(r) * 2 - sweep)
+                let shine = dist < 8 ? (1 - dist / 8) * 0.35 : 0
+                light = min(1, max(light + shine, flash))
+                let level = min(Self.titleLevels - 1, Int(light * Double(Self.titleLevels)))
+                batches.add(g * Self.titleLevels + level, font.glyph(glyph),
+                            CGPoint(x: jetOrigin.x + CGFloat(c) * cw + sway, y: jetOrigin.y - CGFloat(r + 1) * ch + font.descent + bob))
+            }
+        }
+        fire.draw(ctx, font.font, fireColors)
+        batches.draw(ctx, font.font, titleColors)
     }
 
     // MARK: - Title patterns

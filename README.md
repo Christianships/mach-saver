@@ -11,9 +11,10 @@ mouse move brings you back.
 
 ![Afterburner](docs/afterburner.png)
 
-*`afterburner`: a big braille jet with MACH on its wings (MA on one, CH on
-the other), over a wall of ASCII fire. With a custom logo, MACH sits beside it
-in animated ASCII patterns instead.*
+*`afterburner`: a 3D fighter jet in shaded ASCII, banking gently with MACH
+painted on its wings (MA on one, CH on the other) and its afterburners lit,
+over a calm wall of ASCII fire. With a custom logo, MACH sits beside it in
+animated ASCII patterns instead.*
 
 ## Quick start
 
