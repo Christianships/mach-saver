@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 import UniformTypeIdentifiers
 
-struct Rng {
+struct Rng: RandomNumberGenerator {
     private var s: UInt64
     init(seed: UInt64) { s = seed == 0 ? 0x9E37_79B9_7F4A_7C15 : seed }
     mutating func next() -> UInt64 { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s }
@@ -54,12 +54,9 @@ private struct Batches {
     }
 }
 
-private struct TitleCell {
-    let col: Int, row: Int
-}
-
-/// Afterburner: MACH in large animated ASCII patterns over the jet, which
-/// fills most of the screen.
+/// Afterburner: MACH in large letters over the jet, which fills most of the
+/// screen. MACH plays one text effect after another, picked at random, the
+/// way Omarchy's screensaver does (see TextEffects).
 final class Afterburner: ScreensaverView {
     static let screensaver = Screensaver(
         id: "afterburner", title: "Afterburner",
@@ -121,13 +118,14 @@ final class Afterburner: ScreensaverView {
 
     private var titleFont: GlyphFont!
     private var titleOrigin = CGPoint.zero   // bottom-left of MACH
-    private var titleCell = CGSize.zero      // one character of the pattern grid
-    private var titleCells: [TitleCell] = []
+    private var effects: TextEffects!
+    private var effect = TextEffects.Kind.decrypt
+    private var effectStart = 0.0
+    private static let hold = 2.5            // seconds the finished text stays before the next effect
     private var logoOrigin = CGPoint.zero    // top-left of the logo
     private var logoSize = CGSize.zero
     private var pitch: CGFloat = 4
     private var gap: CGFloat = 0
-    private var titleReveal: [Double] = []
     private var dotReveal: [Double] = []
 
     private struct Particle {
@@ -140,7 +138,7 @@ final class Afterburner: ScreensaverView {
     private let shades: [[CGColor]]          // [brightness][gradient]
     private let titleColors: [CGColor]       // [gradient * titleLevels + level]
     private static let gradientSteps = 16, brightSteps = 5, titleLevels = 8
-    private var patternFont: GlyphFont!
+    private let hotColors: [CGColor]
 
     init(frame: NSRect, palette: Palette, logo: DotArt) {
         self.palette = palette
@@ -151,6 +149,7 @@ final class Afterburner: ScreensaverView {
                     .mix(RGB(255, 255, 255), Double(b) / Double(Self.brightSteps - 1) * 0.85).cg()
             }
         }
+        hotColors = (0..<12).map { Palette.ramp(palette.fire, Double($0) / 11).cg() }
         titleColors = (0..<Self.gradientSteps).flatMap { g in
             (0..<Self.titleLevels).map { l in
                 let v = Double(l) / Double(Self.titleLevels - 1)
@@ -183,20 +182,17 @@ final class Afterburner: ScreensaverView {
         logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
         logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: margin + (jetH + logoSize.height) / 2)
 
-        // Each figlet character becomes a 2x2 block of smaller characters,
-        // so the patterns have enough resolution to read.
-        titleCell = CGSize(width: titleFont.advance / 2, height: titleFont.lineHeight / 2)
-        patternFont = GlyphFont(size: (CTFontGetSize(titleFont.font) / 2).rounded())
-        titleCells = []
-        for (r, line) in Art.mach.enumerated() {
-            // Only the █ strokes; the figlet's outline just muddies the letters here.
-            for (c, char) in line.enumerated() where char == "█" {
-                for dy in 0..<2 { for dx in 0..<2 {
-                    titleCells.append(TitleCell(col: c * 2 + dx, row: r * 2 + dy))
-                }}
-            }
+        // Effects can use the whole screen, measured in title characters.
+        let textTop = titleOrigin.y + machH
+        if effects == nil {
+            effects = TextEffects(lines: Art.mach, seed: &rng)
+            effect = TextEffects.Kind.allCases.randomElement(using: &rng)!
+            // AFTERBURNER_EFFECT=beams (etc.) starts on a given effect, for previews.
+            if let name = ProcessInfo.processInfo.environment["AFTERBURNER_EFFECT"],
+               let k = TextEffects.Kind(rawValue: name) { effect = k }
         }
-        titleReveal = titleCells.map { _ in rng.range(0.15, 1.4) }
+        effects.screen = CGRect(x: -titleOrigin.x / titleFont.advance, y: -(H - textTop) / titleFont.lineHeight,
+                                width: W / titleFont.advance, height: H / titleFont.lineHeight)
         dotReveal = logo.points.map { p in 0.3 + Double(p.x) / Double(max(1, logo.width)) * 1.1 + rng.range(0, 0.25) }
     }
 
@@ -207,6 +203,12 @@ final class Afterburner: ScreensaverView {
         clock += dt
         frameIndex += 1
         let t = clock
+        // Next effect once this one has finished and held for a moment.
+        if t - effectStart > effects.duration(effect) + Self.hold {
+            let last = effect
+            while effect == last { effect = TextEffects.Kind.allCases.randomElement(using: &rng)! }
+            effectStart = t
+        }
 
         // Speed lines streaming back from the jet, fading out behind it.
         if rng.unit() < dt * 10 {
@@ -276,95 +278,32 @@ final class Afterburner: ScreensaverView {
         }
     }
 
-    // MARK: - Title patterns
-
-    /// Patterns MACH cycles through. `value` is brightness 0...1 at a grid cell;
-    /// `glyph` picks the character. Coordinates: x 0..<70 left to right, y 0..<12 top down.
-    private struct Pattern {
-        var value: (_ x: Double, _ y: Double, _ t: Double) -> Double
-        var glyph: (_ x: Int, _ y: Int, _ t: Double, _ v: Double) -> Character = { _, _, _, v in rampChar(v) }
-    }
-
-    private static let ramp: [Character] = [".", ":", "-", "=", "+", "*", "x", "#", "%", "@"]
-    private static func rampChar(_ v: Double) -> Character { ramp[min(ramp.count - 1, max(0, Int(v * Double(ramp.count))))] }
-
-    private static func hash(_ a: Int, _ b: Int, _ c: Int = 0) -> Double {
-        var h = UInt64(truncatingIfNeeded: a) &* 0x9E37_79B9 ^ UInt64(truncatingIfNeeded: b) &* 0x85EB_CA6B ^ UInt64(truncatingIfNeeded: c) &* 0xC2B2_AE35
-        h ^= h >> 15; h = h &* 0x2C1B_3C6D; h ^= h >> 12
-        return Double(h % 10_000) / 10_000
-    }
-
-    private static let patterns: [Pattern] = [
-        // Wave rolling left to right.
-        Pattern(value: { x, y, t in 0.5 + 0.5 * sin(x * 0.28 - t * 3.5 + y * 0.45) }),
-        // The word itself, typed out in rows that scroll in alternating directions.
-        Pattern(value: { x, y, t in 0.55 + 0.45 * sin(x * 0.18 - t * 2.2) },
-                glyph: { x, y, t, _ in
-                    let word = Array("MACH")
-                    let dir = y % 2 == 0 ? 1 : -1
-                    return word[((x + dir * Int(t * 9) + y * 2) % word.count + word.count) % word.count]
-                }),
-        // Ripple out from the middle.
-        Pattern(value: { x, y, t in
-            let d = hypot(x - 35, (y - 5.5) * 2.4)
-            return 0.5 + 0.5 * sin(d * 0.42 - t * 5)
-        }),
-        // Digital rain falling down each column.
-        Pattern(value: { x, y, t in
-            let col = Int(x)
-            let speed = 7 + hash(col, 1) * 8
-            let head = (t * speed + hash(col, 2) * 30).truncatingRemainder(dividingBy: 22) - 5
-            let d = head - y
-            return d >= 0 && d < 7 ? 1 - d / 7 : 0
-        }, glyph: { x, y, t, v in
-            let set = Array(v < 0.5 ? "+=:-" : "01MACH<>/\\|")
-            return set[Int(hash(x, y, Int(t * 12)) * Double(set.count))]
-        }),
-        // Plasma.
-        Pattern(value: { x, y, t in
-            let a = sin(x * 0.16 + t) + sin(y * 0.55 - t * 1.3)
-            let b = sin((x + y * 2) * 0.11 + t * 0.7) + sin(hypot(x - 35, y * 3 - 16) * 0.22 - t * 2)
-            return 0.5 + (a + b) / 8
-        }),
-        // Diagonal scan with a trail, over flickering bits.
-        Pattern(value: { x, y, t in
-            let head = (t / 2.4).truncatingRemainder(dividingBy: 1) * 110 - 15
-            let d = head - (x + y * 2)
-            return d >= 0 ? max(0.12, 1 - d / 26) : 0.12
-        }, glyph: { x, y, t, v in
-            v > 0.85 ? "@" : hash(x, y, Int(t * 8)) > 0.5 ? "1" : "0"
-        }),
-    ]
+    // MARK: - Title
 
     private func drawTitle(_ ctx: CGContext, t: Double) {
-        let f = patternFont!
-        let rows = Art.mach.count * 2
-        let period = 7.0, fade = 1.2
-        let k = Int(t / period)
-        let a = Self.patterns[k % Self.patterns.count], b = Self.patterns[(k + 1) % Self.patterns.count]
-        let blend = max(0, (t - Double(k) * period - (period - fade)) / fade)
-        let scramble: [Character] = ["!", "<", ">", "-", "_", "/", "\\", "[", "]", "=", "+", "*", "^", "?", "#"]
+        let f = titleFont!
+        let textTop = titleOrigin.y + CGFloat(effects.rows) * f.lineHeight
         var batches = Batches(Self.gradientSteps * Self.titleLevels)
-
-        for (i, cell) in titleCells.enumerated() {
-            let x = titleOrigin.x + CGFloat(cell.col) * titleCell.width
-            let y = titleOrigin.y + CGFloat(rows - 1 - cell.row) * titleCell.height + f.descent
-            let g = min(Self.gradientSteps - 1, cell.row * Self.gradientSteps / rows)
-            let shown = t - titleReveal[i]
-            if shown < 0 {
-                // Decrypt-in: random symbols until each character lands.
-                let s = scramble[(cell.col * 31 + cell.row * 17 + Int(t / 0.06)) % scramble.count]
-                batches.add(g * Self.titleLevels + 1, f.glyph(s), CGPoint(x: x, y: y))
-                continue
+        var hot = Batches(hotColors.count)
+        let screen = effects.screen
+        let cols = Double(effects.cols), rows = Double(effects.rows)
+        let draw = { (d: TextEffects.Draw) in
+            guard d.x >= screen.minX - 1, d.x < screen.maxX, d.y >= screen.minY - 1, d.y < screen.maxY else { return }
+            let p = CGPoint(x: self.titleOrigin.x + CGFloat(d.x) * f.advance,
+                            y: textTop - CGFloat(d.y + 1) * f.lineHeight + f.descent)
+            if d.hot {
+                hot.add(min(self.hotColors.count - 1, max(0, Int(d.light * Double(self.hotColors.count - 1)))), f.glyph(d.ch), p)
+                return
             }
-            let fx = Double(cell.col), fy = Double(cell.row)
-            var v = a.value(fx, fy, t) * (1 - blend) + b.value(fx, fy, t) * blend
-            // Never below mid brightness, so MACH stays readable in every pattern.
-            v = 0.4 + max(v, 1 - shown / 0.3) * 0.6
-            let glyph = (blend < 0.5 ? a : b).glyph(cell.col, cell.row, t, v)
-            let level = min(Self.titleLevels - 1, Int(v * Double(Self.titleLevels)))
-            batches.add(g * Self.titleLevels + level, f.glyph(glyph), CGPoint(x: x, y: y))
+            // Gradient across the text, diagonally, wherever the character is now.
+            let u = min(1, max(0, d.x / cols * 0.75 + d.y / rows * 0.25))
+            let g = Int(u * Double(Self.gradientSteps - 1))
+            let level = min(Self.titleLevels - 1, max(0, Int((d.light * Double(Self.titleLevels - 1)).rounded())))
+            batches.add(g * Self.titleLevels + level, f.glyph(d.ch), p)
         }
+        let local = t - effectStart
+        if local < effects.duration(effect) { effects.frame(effect, t: local, emit: draw) } else { effects.rested(emit: draw) }
+        hot.draw(ctx, f.font, hotColors)
         batches.draw(ctx, f.font, titleColors)
     }
 }
