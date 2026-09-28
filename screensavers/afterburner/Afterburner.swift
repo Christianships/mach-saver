@@ -104,12 +104,16 @@ private struct TitleCell {
     let col: Int, row: Int
 }
 
-/// Afterburner: MACH drawn in animated ASCII patterns next to the jet, above a
-/// field of ASCII fire with embers blowing in the wind.
+/// Afterburner: the jet, big and centred with MACH on its wings, above a field
+/// of ASCII fire with embers blowing in the wind. A custom logo has no wings,
+/// so it gets MACH in animated ASCII patterns beside it instead.
 final class Afterburner: ScreensaverView {
     static let screensaver = Screensaver(
         id: "afterburner", title: "Afterburner",
-        make: { frame in Afterburner(frame: frame, palette: Palette.named(Settings.palette), logo: Settings.loadLogo()) },
+        make: { frame in
+            let (logo, isJet) = Settings.loadLogo()
+            return Afterburner(frame: frame, palette: Palette.named(Settings.palette), logo: logo, wings: isJet)
+        },
         options: {
             let logoName = Settings.logoPath.map { ($0 as NSString).lastPathComponent } ?? "jet.txt (built in)"
             return [
@@ -138,15 +142,16 @@ final class Afterburner: ScreensaverView {
             set { d.set(newValue, forKey: "afterburner.logoPath") }
         }
 
-        static func loadLogo() -> DotArt {
+        /// The logo, and whether it's the built-in jet (which has wings for MACH).
+        static func loadLogo() -> (DotArt, isJet: Bool) {
             let bundled = Bundle.main.url(forResource: "jet", withExtension: "txt", subdirectory: "afterburner")
             for url in [logoPath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }, bundled] {
                 if let url, let text = try? String(contentsOf: url, encoding: .utf8) {
                     let art = DotArt(text: text)
-                    if !art.points.isEmpty { return art }
+                    if !art.points.isEmpty { return (art, url == bundled) }
                 }
             }
-            return DotArt(text: "⣿")
+            return (DotArt(text: "⣿"), false)
         }
 
         static func chooseLogo() {
@@ -159,7 +164,9 @@ final class Afterburner: ScreensaverView {
     }
 
     private let palette: Palette
-    private let logo: DotArt
+    private var logo: DotArt
+    private var letters: [(x: Int, y: Int)] = []    // MACH on the jet's wings; empty = title beside the logo
+    private var letterReveal: [Double] = []
     private var rng = Rng(seed: UInt64(CACurrentMediaTime() * 1_000_000))
     private var clock = 0.0
     private var frameIndex = 0
@@ -193,9 +200,10 @@ final class Afterburner: ScreensaverView {
     private static let gradientSteps = 16, brightSteps = 5, titleLevels = 8
     private var patternFont: GlyphFont!
 
-    init(frame: NSRect, palette: Palette, logo: DotArt) {
+    init(frame: NSRect, palette: Palette, logo: DotArt, wings: Bool) {
         self.palette = palette
         self.logo = logo
+        if wings { letters = self.logo.paint(Art.jetWings) }
         fireColors = (0..<24).map { Palette.ramp(palette.fire, Double($0) / 23).cg() }
         shades = (0..<Self.brightSteps).map { b in
             (0..<Self.gradientSteps).map { g in
@@ -226,6 +234,20 @@ final class Afterburner: ScreensaverView {
         let flameRows = max(6, Int(Double(rows) * 0.3))
         fire = Fire(cols: cols, rows: rows, flameRows: flameRows)
         flameTop = CGFloat(flameRows) * fireFont.lineHeight
+
+        if !letters.isEmpty {
+            // The jet alone, centred over the flames, as large as fits.
+            pitch = min(W * 0.72 / CGFloat(max(1, logo.width)), (H - flameTop) * 0.86 / CGFloat(max(1, logo.height)))
+            gap = 0
+            logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
+            let centerY = (flameTop + H) / 2 + H * 0.02
+            logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: centerY + logoSize.height / 2)
+            titleCells = []
+            dotReveal = logo.points.map { p in 0.3 + Double(p.x) / Double(max(1, logo.width)) * 1.1 + rng.range(0, 0.25) }
+            // Letters land once the jet has drawn in.
+            letterReveal = letters.map { _ in rng.range(1.7, 2.3) }
+            return
+        }
 
         // Size MACH and the logo together so the pair fills ~3/4 of the width.
         func measure(_ font: GlyphFont) -> (machW: CGFloat, machH: CGFloat, pitch: CGFloat, gap: CGFloat) {
@@ -286,11 +308,12 @@ final class Afterburner: ScreensaverView {
                                    vx: rng.range(-12, 12), vy: rng.range(35, 95), born: t, life: rng.range(1.5, 3.5),
                                    glyph: [".", "'", "*", "."][rng.int(0...3)], phase: rng.range(0, 6)))
         }
-        // Speed lines behind the jet, gone before they reach MACH.
+        // Speed lines behind the jet, gone before they reach MACH (or a little
+        // way past the tail when MACH is on the wings).
         if rng.unit() < dt * 10 {
             let x = Double(logoOrigin.x + logoSize.width * rng.range(0.1, 0.45))
             let vx = -rng.range(260, 460)
-            let stopX = Double(logoOrigin.x - gap * 0.7)
+            let stopX = Double(logoOrigin.x - (letters.isEmpty ? gap * 0.7 : bounds.width * 0.12))
             streaks.append(Particle(x: x, y: Double(logoOrigin.y - logoSize.height * rng.range(0.3, 0.72)),
                                     vx: vx, vy: 0, born: t, life: max(0.05, (x - stopX) / -vx),
                                     length: rng.range(18, 60)))
@@ -319,7 +342,7 @@ final class Afterburner: ScreensaverView {
         drawParticles(ctx, embers, font: fireFont, t: t) { age in Palette.ramp(self.palette.fire, 1 - age * 0.7) }
         drawStreaks(ctx, t: t)
         drawLogo(ctx, t: t)
-        drawTitle(ctx, t: t)
+        if !titleCells.isEmpty { drawTitle(ctx, t: t) }
     }
 
     private func fireChar(_ heat: Double, drift: Int8, _ x: Int, _ y: Int) -> Character {
@@ -392,6 +415,19 @@ final class Afterburner: ScreensaverView {
             let dist = abs(Double(d.x) + Double(d.y) * 0.6 - sweep)
             let shine = dist < 5 ? (1 - dist / 5) * 0.8 : 0
             let b = min(Self.brightSteps - 1, Int((max(flash, shine) * Double(Self.brightSteps - 1)).rounded()))
+            let x = logoOrigin.x + CGFloat(d.x) * pitch + sway
+            let y = logoOrigin.y - CGFloat(d.y + 1) * pitch + bob
+            paths[b][g].addRect(CGRect(x: x, y: y, width: size, height: size))
+        }
+        // MACH on the wings: brighter than the jet, flashing white as each dot lands.
+        for (i, d) in letters.enumerated() {
+            let shown = t - letterReveal[i]
+            guard shown >= 0 else { continue }
+            let g = min(Self.gradientSteps - 1, d.y * Self.gradientSteps / max(1, logo.height))
+            let flash = max(0, 1 - shown / 0.5)
+            let dist = abs(Double(d.x) + Double(d.y) * 0.6 - sweep)
+            let shine = dist < 5 ? 1 - dist / 5 : 0
+            let b = max(2, min(Self.brightSteps - 1, Int((max(flash, shine) * Double(Self.brightSteps - 1)).rounded())))
             let x = logoOrigin.x + CGFloat(d.x) * pitch + sway
             let y = logoOrigin.y - CGFloat(d.y + 1) * pitch + bob
             paths[b][g].addRect(CGRect(x: x, y: y, width: size, height: size))

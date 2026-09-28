@@ -11,8 +11,9 @@ mouse move brings you back.
 
 ![Afterburner](docs/afterburner.png)
 
-*`afterburner`: MACH in ASCII patterns (wave, typed words, ripple, rain,
-plasma, scan) next to a braille jet, over a wall of ASCII fire.*
+*`afterburner`: a big braille jet with MACH on its wings (MA on one, CH on
+the other), over a wall of ASCII fire. With a custom logo, MACH sits beside it
+in animated ASCII patterns instead.*
 
 ## Quick start
 
