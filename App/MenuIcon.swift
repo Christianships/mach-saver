@@ -13,7 +13,7 @@ enum MenuIcon {
 
     private static func make(alpha: CGFloat) -> NSImage {
         let img = NSImage(size: size)
-        let logo = Afterburner.Settings.loadLogo()
+        let logo = Afterburner.logo(at: nil)      // always the built-in jet
         for scale in [1, 2] {
             let w = Int(size.width) * scale, h = Int(size.height) * scale
             guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,

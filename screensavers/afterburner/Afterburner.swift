@@ -58,59 +58,51 @@ private struct Batches {
 /// screen. MACH plays one text effect after another, picked at random, the
 /// way Omarchy's screensaver does (see TextEffects).
 final class Afterburner: ScreensaverView {
+    /// Shows whichever saved screensaver is active in the library.
     static let screensaver = Screensaver(
         id: "afterburner", title: "Afterburner",
-        make: { frame in Afterburner(frame: frame, palette: Palette.named(Settings.palette), logo: Settings.loadLogo()) },
+        make: { frame in
+            let s = Library.load().activeSaver
+            return Afterburner(frame: frame, palette: Palette.named(s.palette), logo: s.logo, title: s.title)
+        },
         options: {
-            let logoName = Settings.logoPath.map { ($0 as NSString).lastPathComponent } ?? "jet.txt (built in)"
+            let lib = Library.load()
             return [
-                Menus.submenu("Color", Palette.all.map { p in
-                    Menus.item(p.title, checked: Settings.palette == p.name) { Settings.palette = p.name }
+                Menus.submenu("Use", lib.savers.map { s in
+                    Menus.item(s.name, checked: s.id == lib.active) {
+                        var l = Library.load(); l.active = s.id; l.save()
+                    }
                 }),
-                Menus.submenu("Logo", [
-                    Menus.disabled(logoName),
-                    Menus.item("Choose Logo File…") { Settings.chooseLogo() },
-                    Menus.item("Use Built-in Jet", checked: Settings.logoPath == nil) { Settings.logoPath = nil },
-                ]),
+                Menus.submenu("Color", Palette.all.map { p in
+                    Menus.item(p.title, checked: lib.activeSaver.palette == p.name) {
+                        var l = Library.load()
+                        if let i = l.savers.firstIndex(where: { $0.id == l.active }) { l.savers[i].palette = p.name; l.save() }
+                    }
+                }),
             ]
         })
 
-    enum Settings {
-        private static let d = UserDefaults.standard
-
-        static var palette: String {
-            get { d.string(forKey: "afterburner.palette") ?? Palette.purple.name }
-            set { d.set(newValue, forKey: "afterburner.palette") }
+    /// A logo file as dots: braille/ASCII text (like ~/.config/fastfetch/txt)
+    /// or an image. nil, or anything unreadable, is the bundled jet.
+    static func logo(at path: String?) -> DotArt {
+        if let path {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            let art = ["txt", "text", ""].contains(url.pathExtension.lowercased())
+                ? DotArt(text: (try? String(contentsOf: url, encoding: .utf8)) ?? "")
+                : DotArt(image: url)
+            if !art.points.isEmpty { return art }
         }
-
-        /// A braille/ASCII logo file, like the ones in ~/.config/fastfetch/txt. nil uses the bundled jet.
-        static var logoPath: String? {
-            get { d.string(forKey: "afterburner.logoPath") }
-            set { d.set(newValue, forKey: "afterburner.logoPath") }
+        if let url = Bundle.main.url(forResource: "jet", withExtension: "txt", subdirectory: "afterburner"),
+           let text = try? String(contentsOf: url, encoding: .utf8) {
+            let art = DotArt(text: text)
+            if !art.points.isEmpty { return art }
         }
-
-        static func loadLogo() -> DotArt {
-            let bundled = Bundle.main.url(forResource: "jet", withExtension: "txt", subdirectory: "afterburner")
-            for url in [logoPath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }, bundled] {
-                if let url, let text = try? String(contentsOf: url, encoding: .utf8) {
-                    let art = DotArt(text: text)
-                    if !art.points.isEmpty { return art }
-                }
-            }
-            return DotArt(text: "⣿")
-        }
-
-        static func chooseLogo() {
-            let panel = NSOpenPanel()
-            panel.allowedContentTypes = [.plainText, .text]
-            panel.directoryURL = URL(fileURLWithPath: ("~/.config/fastfetch/txt" as NSString).expandingTildeInPath)
-            NSApp.activate(ignoringOtherApps: true)
-            if panel.runModal() == .OK, let url = panel.url { logoPath = url.path }
-        }
+        return DotArt(text: "⣿")
     }
 
     private let palette: Palette
     private let logo: DotArt
+    private let title: [String]              // the big word, as rows of █ (MACH by default)
     private var rng = Rng(seed: UInt64(CACurrentMediaTime() * 1_000_000))
     private var clock = 0.0
     private var frameIndex = 0
@@ -140,9 +132,10 @@ final class Afterburner: ScreensaverView {
     private static let gradientSteps = 16, brightSteps = 5, titleLevels = 8
     private let hotColors: [CGColor]
 
-    init(frame: NSRect, palette: Palette, logo: DotArt) {
+    init(frame: NSRect, palette: Palette, logo: DotArt, title: [String] = Art.mach) {
         self.palette = palette
         self.logo = logo
+        self.title = title
         shades = (0..<Self.brightSteps).map { b in
             (0..<Self.gradientSteps).map { g in
                 Palette.ramp(palette.accent, Double(g) / Double(Self.gradientSteps - 1))
@@ -174,7 +167,7 @@ final class Afterburner: ScreensaverView {
         gap = 0
         logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
         logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: (H + logoSize.height) / 2)
-        let machCols = CGFloat(Art.mach[0].count), machRows = CGFloat(Art.mach.count)
+        let machCols = CGFloat(title.map(\.count).max() ?? 1), machRows = CGFloat(title.count)
         let probe = GlyphFont(size: 20)
         let k = min(W * 0.7 / (machCols * probe.advance), H * 0.24 / (machRows * probe.lineHeight))
         titleFont = GlyphFont(size: (20 * k).rounded())
@@ -184,7 +177,7 @@ final class Afterburner: ScreensaverView {
         // Effects can use the whole screen, measured in title characters.
         let textTop = titleOrigin.y + machH
         if effects == nil {
-            effects = TextEffects(lines: Art.mach, seed: &rng)
+            effects = TextEffects(lines: title, seed: &rng)
             effect = TextEffects.Kind.allCases.randomElement(using: &rng)!
             // AFTERBURNER_EFFECT=beams (etc.) starts on a given effect, for previews.
             if let name = ProcessInfo.processInfo.environment["AFTERBURNER_EFFECT"],

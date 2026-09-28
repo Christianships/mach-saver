@@ -41,9 +41,20 @@ it's keeping your Mac awake.
 | `mach-saver use <name>` | Switch the active screensaver |
 
 The panel (styled after [MouseSkins](https://github.com/Christianships/MouseSkins))
-opens in the middle of the screen. **Home** has the screensaver running live,
-plus the colour, keep-awake mode and idle delay; **Settings** has launch at
-login, lock and quit. The panel is its own short-lived process, so
+opens in the middle of the screen, with a sidebar:
+
+- **Screensavers**: your saved screensavers, each with its own word (MACH, or
+  anything up to 10 characters, drawn in block letters), logo (the jet, a
+  braille/ASCII `.txt` like the fastfetch ones, or any image, turned into
+  dots) and colour. `+` makes a new one; **Use** picks the one that plays.
+- **Colors**: the built-in colourways plus your own. `+` copies the selected
+  one into an editable colourway: background, jet gradient, text gradient and
+  camo, all with a live preview.
+- **Settings**: keep awake, how long you're away before the screensaver
+  shows, launch at login.
+
+Screensavers and colourways are saved in
+`~/Library/Application Support/Mach Saver/library.json`. The panel is its own short-lived process, so
 the menu bar app stays small; they talk over distributed notifications.
 
 In AeroSpace I bind it to Super+|:

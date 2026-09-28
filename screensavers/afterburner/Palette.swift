@@ -69,7 +69,12 @@ struct Palette {
         text: [RGB(88, 91, 96), RGB(120, 123, 128), RGB(160, 163, 168), RGB(230, 231, 233)],
         camo: true)
 
-    static let all = [purple, military, classic, mono]
+    static let builtIn = [purple, military, classic, mono]
 
-    static func named(_ name: String) -> Palette { all.first { $0.name == name } ?? purple }
+    /// Built-in palettes, then the colourways saved in the library.
+    static var all: [Palette] { builtIn + Library.load().colorways.map(\.palette) }
+
+    static func named(_ name: String) -> Palette {
+        builtIn.first { $0.name == name } ?? Library.load().colorways.first { $0.id == name }?.palette ?? purple
+    }
 }
