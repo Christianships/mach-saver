@@ -1,0 +1,23 @@
+#!/bin/sh
+# Control the Mach Saver menu bar app.
+set -e
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: mach-saver <command>
+  show          show the screensaver now (move the mouse or type to exit)
+  start         start a session: stay awake and show the screensaver
+  stop          end the session
+  toggle        start or end a session
+  list          list screensavers (* = active)
+  use <name>    switch the active screensaver
+USAGE
+    exit 1
+}
+
+case "${1:-}" in
+    show|start|stop|toggle) open -g "mach-saver://$1" ;;
+    use) [ -n "${2:-}" ] || usage; open -g "mach-saver://use/$2" ;;
+    list) "$HOME/Applications/Mach Saver.app/Contents/MacOS/MachSaver" --list ;;
+    *) usage ;;
+esac
