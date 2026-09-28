@@ -21,6 +21,7 @@ struct Palette {
     let fire: [RGB]     // cold -> hot
     let accent: [RGB]   // logo gradient, top -> bottom
     var text: [RGB]? = nil  // MACH gradient, left -> right; nil uses `accent`
+    var camo = false        // MACH painted in camo bands of `text` instead of a gradient
 
     static func ramp(_ stops: [RGB], _ t: Double) -> RGB {
         let t = min(1, max(0, t)) * Double(stops.count - 1)
@@ -57,7 +58,18 @@ struct Palette {
         accent: [RGB(250, 250, 250), RGB(232, 232, 232), RGB(214, 214, 214),
                  RGB(196, 196, 196), RGB(178, 178, 178), RGB(160, 160, 160)])
 
-    static let all = [purple, classic, mono]
+    // mach-boot's strike screen: camo grays, a gunmetal jet, orange fire.
+    static let military = Palette(
+        name: "military", title: "Military",
+        background: RGB(20, 20, 20),
+        fire: [RGB(62, 62, 62), RGB(107, 70, 54), RGB(184, 70, 26), RGB(240, 106, 28),
+               RGB(255, 154, 51), RGB(255, 200, 107), RGB(255, 241, 201), RGB(255, 255, 255)],
+        accent: [RGB(233, 236, 239), RGB(183, 189, 198), RGB(142, 145, 150), RGB(107, 110, 115), RGB(75, 77, 80)],
+        // mach-boot's CAMO grays, each lifted a step so every band stands off the background.
+        text: [RGB(88, 91, 96), RGB(120, 123, 128), RGB(160, 163, 168), RGB(230, 231, 233)],
+        camo: true)
+
+    static let all = [purple, military, classic, mono]
 
     static func named(_ name: String) -> Palette { all.first { $0.name == name } ?? purple }
 }

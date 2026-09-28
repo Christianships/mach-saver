@@ -279,6 +279,25 @@ final class Afterburner: ScreensaverView {
 
     // MARK: - Title
 
+    /// Smooth 0…1 value noise over character cells: two octaves, stretched
+    /// wide because characters are taller than they are wide.
+    private static func camoNoise(_ x: Double, _ y: Double) -> Double {
+        func lattice(_ i: Int, _ j: Int, _ o: Int) -> Double {
+            var h = UInt64(truncatingIfNeeded: i) &* 0x9E37_79B9 ^ UInt64(truncatingIfNeeded: j) &* 0x85EB_CA6B
+                ^ UInt64(truncatingIfNeeded: o) &* 0xC2B2_AE35
+            h ^= h >> 15; h = h &* 0x2C1B_3C6D; h ^= h >> 12
+            return Double(h % 10_000) / 10_000
+        }
+        func octave(_ x: Double, _ y: Double, _ o: Int) -> Double {
+            let xi = Int(floor(x)), yi = Int(floor(y))
+            let fx = x - floor(x), fy = y - floor(y)
+            let sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy)
+            let a = lattice(xi, yi, o), b = lattice(xi + 1, yi, o), c = lattice(xi, yi + 1, o), d = lattice(xi + 1, yi + 1, o)
+            return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy
+        }
+        return octave(x / 5, y / 2.5, 0) * 0.7 + octave(x / 2.2, y / 1.1, 1) * 0.3
+    }
+
     private func drawTitle(_ ctx: CGContext, t: Double) {
         let f = titleFont!
         let textTop = titleOrigin.y + CGFloat(effects.rows) * f.lineHeight
@@ -296,9 +315,17 @@ final class Afterburner: ScreensaverView {
                 hot.add(min(self.hotColors.count - 1, max(0, Int(d.light * Double(self.hotColors.count - 1)))), f.glyph(d.ch), p)
                 return
             }
-            // Gradient across the text, diagonally, wherever the character is now.
-            let u = min(1, max(0, d.x / cols * 0.75 + d.y / rows * 0.25))
-            let g = Int(u * Double(Self.gradientSteps - 1))
+            // Gradient across the text, diagonally, wherever the character is
+            // now; or camo bands, like mach-boot's strike screen.
+            let g: Int
+            if self.palette.camo {
+                let n = Self.camoNoise(d.x.rounded(), d.y.rounded())
+                let band = n < 0.38 ? 0 : n < 0.52 ? 1 : n < 0.66 ? 2 : 3
+                g = band * (Self.gradientSteps - 1) / 3
+            } else {
+                let u = min(1, max(0, d.x / cols * 0.75 + d.y / rows * 0.25))
+                g = Int(u * Double(Self.gradientSteps - 1))
+            }
             let level = min(Self.titleLevels - 1, max(0, Int((d.light * Double(Self.titleLevels - 1)).rounded())))
             batches.add(g * Self.titleLevels + level, f.glyph(d.ch), p)
         }
