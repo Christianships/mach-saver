@@ -168,19 +168,17 @@ final class Afterburner: ScreensaverView {
         let W = bounds.width, H = bounds.height
         laidOutFor = bounds.size
 
-        // MACH large across the top; the jet as big as fits in the rest.
-        let margin = H * 0.05, spacing = H * 0.04
+        // The jet as big as the screen allows, centred, with MACH large across its middle.
+        pitch = min(W * 0.94 / CGFloat(max(1, logo.width)), H * 0.9 / CGFloat(max(1, logo.height)))
+        gap = 0
+        logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
+        logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: (H + logoSize.height) / 2)
         let machCols = CGFloat(Art.mach[0].count), machRows = CGFloat(Art.mach.count)
         let probe = GlyphFont(size: 20)
         let k = min(W * 0.7 / (machCols * probe.advance), H * 0.24 / (machRows * probe.lineHeight))
         titleFont = GlyphFont(size: (20 * k).rounded())
         let machW = machCols * titleFont.advance, machH = machRows * titleFont.lineHeight
-        titleOrigin = CGPoint(x: (W - machW) / 2, y: H - margin - machH)
-        let jetH = titleOrigin.y - spacing - margin
-        pitch = min(W * 0.92 / CGFloat(max(1, logo.width)), jetH / CGFloat(max(1, logo.height)))
-        gap = 0
-        logoSize = CGSize(width: CGFloat(logo.width) * pitch, height: CGFloat(logo.height) * pitch)
-        logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: margin + (jetH + logoSize.height) / 2)
+        titleOrigin = CGPoint(x: (W - machW) / 2, y: (H - machH) / 2)
 
         // Effects can use the whole screen, measured in title characters.
         let textTop = titleOrigin.y + machH
@@ -285,12 +283,14 @@ final class Afterburner: ScreensaverView {
         let textTop = titleOrigin.y + CGFloat(effects.rows) * f.lineHeight
         var batches = Batches(Self.gradientSteps * Self.titleLevels)
         var hot = Batches(hotColors.count)
+        var cells: [CGRect] = []
         let screen = effects.screen
         let cols = Double(effects.cols), rows = Double(effects.rows)
         let draw = { (d: TextEffects.Draw) in
             guard d.x >= screen.minX - 1, d.x < screen.maxX, d.y >= screen.minY - 1, d.y < screen.maxY else { return }
             let p = CGPoint(x: self.titleOrigin.x + CGFloat(d.x) * f.advance,
                             y: textTop - CGFloat(d.y + 1) * f.lineHeight + f.descent)
+            if d.light > 0.2 { cells.append(CGRect(x: p.x, y: p.y - f.descent, width: f.advance, height: f.lineHeight)) }
             if d.hot {
                 hot.add(min(self.hotColors.count - 1, max(0, Int(d.light * Double(self.hotColors.count - 1)))), f.glyph(d.ch), p)
                 return
@@ -303,6 +303,10 @@ final class Afterburner: ScreensaverView {
         }
         let local = t - effectStart
         if local < effects.duration(effect) { effects.frame(effect, t: local, emit: draw) } else { effects.rested(emit: draw) }
+        // MACH sits on the jet: clear a cell behind each character so the
+        // jet's dots don't show through the letters.
+        ctx.setFillColor(palette.background.cg(0.9))
+        ctx.fill(cells)
         hot.draw(ctx, f.font, hotColors)
         batches.draw(ctx, f.font, titleColors)
     }

@@ -11,8 +11,8 @@ mouse move brings you back.
 
 ![Afterburner](docs/afterburner.png)
 
-*`afterburner`: MACH in large letters over a braille jet that fills most of the
-screen. Like Omarchy's screensaver, MACH plays one
+*`afterburner`: a braille jet filling the screen with MACH in large letters
+across its middle. Like Omarchy's screensaver, MACH plays one
 [terminaltexteffects](https://github.com/ChrisBuilds/terminaltexteffects)-style
 effect after another at random: decrypt, beams, rain, slide, expand,
 scattered, middle-out, print, unstable, burn, waves, matrix, spray, crumble
