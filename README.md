@@ -42,6 +42,14 @@ and shows the screensaver straight away.
 The same things are in the flame menu, plus keep-awake mode, idle delay, lock
 screen, launch at login, and each screensaver's own settings.
 
+**Open Mach Saver…** in the flame menu brings up a floating panel (styled after
+[MouseSkins](https://github.com/Christianships/MouseSkins)): **Home** shows
+whether it's keeping you awake and why, with a live preview to show the
+screensaver now; **Screensaver** picks the colour from previews; **Agents**
+edits which programs count as agents; **Settings** has keep-awake, the idle
+delay and launch at login. The panel is its own short-lived process, so the
+menu bar app stays small; they talk over distributed notifications.
+
 In AeroSpace I bind it to Super+|:
 
 ```toml

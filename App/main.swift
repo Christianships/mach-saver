@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastScan: CFTimeInterval = 0
     private var tick: Timer?
     private var shownIcon: Bool?
+    private var sentStatus: [String: AnyHashable] = [:]
     /// A manual session (opening the app): stay awake with the screensaver up,
     /// agents or not, until you come back and dismiss it.
     private var sessionActive = false
@@ -28,6 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Prefs.registerDefaults()
         menu.delegate = self
         statusItem.menu = menu
+        // The panel (its own process) asks for status when it opens and sends commands.
+        Bus.observe(Bus.request) { [weak self] _ in self?.sentStatus = [:]; self?.update() }
+        Bus.observe(Bus.command) { [weak self] info in
+            switch info["do"] as? String {
+            case "show": self?.startSession()
+            case "refresh": self?.update(scan: true)
+            default: break
+            }
+        }
         saver.onUserDismiss = { [weak self] in
             self?.sessionActive = false
             self?.update()
@@ -80,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.image = NSImage(systemSymbolName: awake.isHeld ? "flame.fill" : "flame",
                                                accessibilityDescription: "Mach Saver")
         }
-        defer { schedule() }
+        defer { schedule(); broadcast() }
 
         if saver.isShowing {
             if !stayAwake && !saver.isPreview {
@@ -97,6 +107,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             saver.show()
         }
         if !saver.isShowing { awake.endNudges() }
+    }
+
+    /// Tells an open panel what's going on, when it changes.
+    private func broadcast() {
+        let status: [String: AnyHashable] = ["agents": monitor.running, "working": monitor.isWorking,
+                                             "awake": awake.isHeld, "session": sessionActive]
+        guard status != sentStatus else { return }
+        sentStatus = status
+        Bus.post(Bus.status, status)
     }
 
     /// Re-arms the timer when the pace should change. The tolerance lets macOS
@@ -159,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(Menus.disabled("Mach Saver — \(summary)"))
         menu.addItem(Menus.disabled(awake.isHeld ? "Keeping your Mac awake" : "Not keeping your Mac awake"))
         menu.addItem(.separator())
+        menu.addItem(Menus.item("Open Mach Saver…") { PanelProcess.toggle() })
         menu.addItem(Menus.item("Show Screensaver") { self.startSession() })
         menu.addItem(.separator())
 
@@ -202,6 +222,14 @@ func snapshot(_ args: [String]) {
 }
 
 Prefs.registerDefaults()
+// `--panel` is the settings panel, its own short-lived process (see MachSaverPanel).
+if CommandLine.arguments.contains("--panel") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    DispatchQueue.main.async { MachSaverPanel.show() }
+    app.run()
+    exit(0)
+}
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot") {
     snapshot(Array(CommandLine.arguments[(i + 1)...]))
     exit(0)
