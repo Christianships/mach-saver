@@ -28,13 +28,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         Prefs.registerDefaults()
         menu.delegate = self
-        statusItem.menu = menu
+        // Left click opens the panel under the icon; right click shows the menu.
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         // The panel (its own process) asks for status when it opens and sends commands.
         Bus.observe(Bus.request) { [weak self] _ in self?.sentStatus = [:]; self?.update() }
         Bus.observe(Bus.command) { [weak self] info in
             switch info["do"] as? String {
-            case "show": self?.startSession()
             case "refresh": self?.update(scan: true)
+            case "quit": NSApp.terminate(nil)
             default: break
             }
         }
@@ -44,22 +47,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         update(scan: true)
 
-        // Opening the app yourself starts a session. Launching at login, from a
+        // Opening the app yourself opens the panel. Launching at login, from a
         // mach-saver:// link, or with --background just puts it in the menu bar.
+        // The screensaver itself only comes up from mach-saver://show (the
+        // AeroSpace binding) or when an agent is working and you're away.
         let event = NSAppleEventManager.shared().currentAppleEvent
         let atLogin = event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
         let openedByUser = (note.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool) ?? false
         if CommandLine.arguments.contains("--preview") {
             saver.show(preview: true)
         } else if openedByUser && !atLogin && !CommandLine.arguments.contains("--background") {
-            startSession()
+            PanelProcess.open(anchor: panelAnchor)
         }
     }
 
-    /// Opening the app again while it's running (Spotlight, Finder, Dock) starts a session too.
+    /// Opening the app again while it's running (Spotlight, Finder, Dock) opens the panel.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        startSession()
+        PanelProcess.open(anchor: panelAnchor)
         return false
+    }
+
+    /// Top centre just under the menu bar icon, in screen points.
+    private var panelAnchor: NSPoint? {
+        guard let button = statusItem.button, let window = button.window else { return nil }
+        let r = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return NSPoint(x: r.midX, y: r.minY)
+    }
+
+    @objc private func statusItemClicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil       // detach so the next click comes back here
+            return
+        }
+        PanelProcess.toggle(anchor: panelAnchor)
     }
 
     func applicationWillTerminate(_ note: Notification) {
@@ -178,8 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(Menus.disabled("Mach Saver — \(summary)"))
         menu.addItem(Menus.disabled(awake.isHeld ? "Keeping your Mac awake" : "Not keeping your Mac awake"))
         menu.addItem(.separator())
-        menu.addItem(Menus.item("Open Mach Saver…") { PanelProcess.toggle() })
-        menu.addItem(Menus.item("Show Screensaver") { self.startSession() })
+        menu.addItem(Menus.item("Open Mach Saver…") { PanelProcess.open(anchor: self.panelAnchor) })
         menu.addItem(.separator())
 
         let active = Screensavers.active

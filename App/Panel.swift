@@ -24,7 +24,12 @@ enum Bus {
 // MARK: model
 
 final class PanelModel: ObservableObject {
-    enum Tab: String, CaseIterable { case home = "Home", screensaver = "Screensaver", agents = "Agents", settings = "Settings" }
+    enum Tab: String, CaseIterable {
+        case home = "Home", agents = "Agents", settings = "Settings"
+        var symbol: String {
+            switch self { case .home: "house.fill"; case .agents: "terminal.fill"; case .settings: "gearshape.fill" }
+        }
+    }
     @Published var tab: Tab = .home
 
     // From the agent.
@@ -40,7 +45,6 @@ final class PanelModel: ObservableObject {
     @Published var palette = Afterburner.Settings.palette
     @Published var agentNames = Prefs.agentNames
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
-    @Published var thumbnails: [String: NSImage] = [:]
 
     init() {
         Bus.observe(Bus.status) { [weak self] info in
@@ -52,8 +56,6 @@ final class PanelModel: ObservableObject {
             heard = true
         }
         Bus.post(Bus.request)
-        // Previews render once, off the first frame, so the panel opens instantly.
-        DispatchQueue.main.async { [weak self] in self?.renderThumbnails() }
     }
 
     var agentSummary: String {
@@ -61,16 +63,27 @@ final class PanelModel: ObservableObject {
         return counts.sorted { $0.key < $1.key }.map { $0.value > 1 ? "\($0.key) ×\($0.value)" : $0.key }.joined(separator: ", ")
     }
 
-    // MARK: actions
+    var headline: String { awake ? "Keeping your Mac awake" : "Your Mac sleeps as usual" }
 
-    func showScreensaver() {
-        Bus.post(Bus.command, ["do": "show"])
-        MachSaverPanel.close()
+    var detail: String {
+        guard heard else { return "Connecting to the menu bar…" }
+        if session { return "Screensaver session on until you come back" }
+        if agents.isEmpty { return "No agents running" }
+        if !working { return "\(agentSummary) idle" }
+        return idleMinutes == 0 ? "\(agentSummary) working"
+            : "\(agentSummary) working · screensaver after \(Int(idleMinutes)) min away"
     }
+
+    // MARK: actions
 
     func lock() {
         MachSaverPanel.close()
         ScreenLock.lockNow()
+    }
+
+    func quit() {
+        Bus.post(Bus.command, ["do": "quit"])
+        MachSaverPanel.close()
     }
 
     func setKeepAwake(_ m: KeepAwake) { keepAwake = m; Prefs.keepAwake = m; changed() }
@@ -93,28 +106,11 @@ final class PanelModel: ObservableObject {
 
     /// Tells the agent to re-read settings now rather than on its next tick.
     private func changed() { Bus.post(Bus.command, ["do": "refresh"]) }
-
-    /// A still of each colour, rendered off screen at the main screen's
-    /// proportions and scaled down.
-    private func renderThumbnails() {
-        let screen = NSScreen.main?.frame.size ?? NSSize(width: 1512, height: 982)
-        let logo = Afterburner.Settings.loadLogo()
-        for p in Palette.all {
-            let view = Afterburner(frame: NSRect(origin: .zero, size: screen), palette: p, logo: logo)
-            for _ in 0..<120 { view.advance(1.0 / 30) }     // 4s in: the jet has landed, MACH is at rest
-            // Render at full size (the scene lays itself out for the screen), then shrink.
-            guard let full = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
-            view.cacheDisplay(in: view.bounds, to: full)
-            let size = NSSize(width: 520, height: 520 * screen.height / screen.width)
-            thumbnails[p.name] = NSImage(size: size, flipped: false) { r in full.draw(in: r); return true }
-        }
-    }
 }
 
-// MARK: panel
+// MARK: panel window
 
-/// A floating HUD centred on the screen the pointer is on, like Spotlight.
-/// Esc or clicking elsewhere dismisses it.
+/// A floating dark HUD. Esc or clicking elsewhere dismisses it.
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { close() }
@@ -125,10 +121,11 @@ final class FloatingPanel: NSPanel {
 }
 
 /// Like MouseSkins, the panel runs in its own short-lived process
-/// (`MachSaver --panel`, started from the menu bar) and quits when it closes,
-/// so the agent that sits in the menu bar all day never loads SwiftUI.
+/// (`MachSaver --panel [--anchor x,y]`, started by the menu bar agent) and
+/// quits when it closes, so the agent that sits in the menu bar all day never
+/// loads SwiftUI. With an anchor it drops down from the menu bar icon.
 enum MachSaverPanel {
-    static let size = NSSize(width: 600, height: 460)
+    static let size = NSSize(width: 440, height: 596)
     private static var panel: FloatingPanel?
 
     static func show() {
@@ -138,7 +135,8 @@ enum MachSaverPanel {
         p.titleVisibility = .hidden
         p.titlebarAppearsTransparent = true
         p.isMovableByWindowBackground = true
-        p.level = .floating
+        p.level = .popUpMenu
+        p.appearance = NSAppearance(named: .darkAqua)
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isReleasedWhenClosed = false
         p.hidesOnDeactivate = false
@@ -163,15 +161,29 @@ enum MachSaverPanel {
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }
         panel = p
-
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        if let f = screen?.visibleFrame {
-            p.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2,
-                              width: size.width, height: size.height), display: true)
-        }
+        p.setFrame(frame(), display: true)
         NSApp.activate(ignoringOtherApps: true)
         p.makeKeyAndOrderFront(nil)
+    }
+
+    /// Under the menu bar icon when the agent passed its position, else
+    /// centred on the screen with the pointer.
+    private static func frame() -> NSRect {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--anchor"), i + 1 < args.count {
+            let xy = args[i + 1].split(separator: ",").compactMap { Double($0) }
+            if xy.count == 2 {
+                let a = NSPoint(x: xy[0], y: xy[1])
+                let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: a.x, y: a.y - 1)) } ?? NSScreen.main
+                let vis = screen?.visibleFrame ?? .zero
+                var x = a.x - size.width / 2
+                x = min(max(x, vis.minX + 8), vis.maxX - size.width - 8)
+                return NSRect(x: x, y: a.y - 6 - size.height, width: size.width, height: size.height)
+            }
+        }
+        let mouse = NSEvent.mouseLocation
+        let f = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
+        return NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2, width: size.width, height: size.height)
     }
 
     static func close() { panel?.close() }
@@ -181,17 +193,29 @@ enum MachSaverPanel {
 enum PanelProcess {
     private static var process: Process?
 
-    static func toggle() {
-        if let p = process, p.isRunning { p.terminate(); process = nil; return }
+    static var isOpen: Bool { process?.isRunning == true }
+
+    /// Clicking the menu bar icon again closes it, like a menu.
+    static func toggle(anchor: NSPoint? = nil) {
+        if isOpen { process?.terminate(); process = nil } else { open(anchor: anchor) }
+    }
+
+    static func open(anchor: NSPoint? = nil) {
+        guard !isOpen else { return }
         let p = Process()
         p.executableURL = Bundle.main.executableURL
-        p.arguments = ["--panel"]
+        p.arguments = ["--panel"] + (anchor.map { ["--anchor", "\($0.x),\($0.y)"] } ?? [])
         do { try p.run(); process = p } catch { NSSound.beep() }
     }
 }
 
 enum Accent {
     static let color = Color(red: 0.66, green: 0.33, blue: 0.97)     // #A855F7, MACH's violet
+    static let deep = Color(red: 0.42, green: 0.13, blue: 0.66)      // #6B21A8
+}
+
+extension RGB {
+    var color: Color { Color(red: r / 255, green: g / 255, blue: b / 255) }
 }
 
 // MARK: shell
@@ -200,40 +224,67 @@ struct PanelView: View {
     @EnvironmentObject var model: PanelModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Picker("", selection: $model.tab) {
-                    ForEach(PanelModel.Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 340)
-                Spacer()
-                toolbar
-            }
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
-
+        VStack(spacing: 14) {
+            header
+            tabs
             Group {
                 switch model.tab {
                 case .home: HomeView()
-                case .screensaver: ScreensaverTab()
                 case .agents: AgentsView()
                 case .settings: SettingsView()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .ignoresSafeArea()      // the hidden title bar would otherwise leave a gap on top
+        .padding(16)
+        .background(Color.black.opacity(0.45))      // darker than the stock HUD material
+        .background(alignment: .top) {
+            // A faint violet glow behind the header.
+            RadialGradient(colors: [Accent.color.opacity(0.22), .clear], center: .top, startRadius: 0, endRadius: 260)
+                .frame(height: 220).allowsHitTesting(false)
+        }
+        .ignoresSafeArea()
     }
 
-    @ViewBuilder private var toolbar: some View {
-        switch model.tab {
-        case .home, .screensaver:
-            IconButton("lock", "Lock screen") { model.lock() }
-            IconButton("play.fill", "Show the screensaver now", tint: Accent.color, filled: true) { model.showScreensaver() }
-        case .agents:
-            IconButton("arrow.counterclockwise", "Reset to the built-in agent list") { model.resetAgents() }
-        case .settings:
-            IconButton("lock", "Lock screen") { model.lock() }
+    private var header: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(LinearGradient(colors: [Accent.color, Accent.deep], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: model.awake ? "flame.fill" : "flame")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+            }
+            .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Mach Saver").font(.system(size: 15, weight: .bold))
+                HStack(spacing: 5) {
+                    Circle().fill(model.awake ? Color.green : Color.secondary.opacity(0.6)).frame(width: 6, height: 6)
+                    Text(model.headline).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            IconButton("lock.fill", "Lock screen") { model.lock() }
         }
+        .padding(.top, 4)
+    }
+
+    private var tabs: some View {
+        HStack(spacing: 4) {
+            ForEach(PanelModel.Tab.allCases, id: \.self) { tab in
+                let on = model.tab == tab
+                Button { withAnimation(.easeOut(duration: 0.15)) { model.tab = tab } } label: {
+                    Label(tab.rawValue, systemImage: tab.symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(on ? Color.white : Color.secondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 7)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(on ? Accent.color.opacity(0.85) : .clear))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Color.primary.opacity(0.07)))
     }
 }
 
@@ -251,7 +302,7 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(filled ? Color.white : tint ?? Color.primary)
                 .frame(width: 30, height: 30)
                 .background(Circle().fill(filled ? AnyShapeStyle(tint ?? .accentColor) : AnyShapeStyle(Color.primary.opacity(0.08))))
@@ -270,33 +321,49 @@ struct Badge: View {
             if let symbol { Image(systemName: symbol) }
             Text(text)
         }
-        .font(.system(size: 10, weight: .semibold))
+        .font(.system(size: 10, weight: .bold))
         .foregroundStyle(Color.white)
         .padding(.horizontal, 7).padding(.vertical, 3)
         .background(Capsule().fill(color))
     }
 }
 
-/// A rounded card, the panel's basic surface.
-private struct Card<Content: View>: View {
+/// A titled group of controls on a rounded card.
+private struct PanelSection<Content: View>: View {
+    let title: String
     @ViewBuilder var content: Content
     var body: some View {
-        content
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).kerning(0.6)
+            content
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
     }
 }
 
-private struct Thumbnail: View {
-    let image: NSImage?
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10).fill(Color.black)
-            if let image { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit) }
-            else { ProgressView().controlSize(.small) }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+/// The screensaver itself, running live in the panel.
+struct LivePreview: NSViewRepresentable {
+    let palette: String
+
+    final class Holder { var palette = "" }
+    func makeCoordinator() -> Holder { Holder() }
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.black.cgColor
+        return v
+    }
+
+    func updateNSView(_ v: NSView, context: Context) {
+        guard context.coordinator.palette != palette else { return }
+        context.coordinator.palette = palette
+        v.subviews.forEach { $0.removeFromSuperview() }
+        let scene = Afterburner(frame: v.bounds, palette: Palette.named(palette), logo: Afterburner.Settings.loadLogo())
+        scene.autoresizingMask = [.width, .height]
+        v.addSubview(scene)
     }
 }
 
@@ -306,119 +373,71 @@ struct HomeView: View {
     @EnvironmentObject var model: PanelModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Card {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(model.awake ? "Keeping your Mac awake" : "Your Mac sleeps as usual")
-                            .font(.system(size: 17, weight: .bold)).lineLimit(1)
+        VStack(spacing: 12) {
+            hero
+            PanelSection(title: "Colour") {
+                HStack(spacing: 8) {
+                    ForEach(Palette.all, id: \.name) { swatch($0) }
+                }
+            }
+            PanelSection(title: "Keep awake") {
+                Picker("", selection: Binding(get: { model.keepAwake }, set: { model.setKeepAwake($0) })) {
+                    ForEach(KeepAwake.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+            PanelSection(title: "Screensaver when you're away for") {
+                Picker("", selection: Binding(get: { model.idleMinutes }, set: { model.setIdle($0) })) {
+                    ForEach([1.0, 2, 5, 10, 15, 0], id: \.self) { m in Text(m == 0 ? "Never" : "\(Int(m)) min").tag(m) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+        }
+    }
+
+    private var hero: some View {
+        LivePreview(palette: model.palette)
+            .frame(height: 200)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
                         if model.session { Badge(text: "Session", color: Accent.color, symbol: "play.fill") }
                         if !model.agents.isEmpty {
                             Badge(text: model.working ? "Working" : "Idle", color: model.working ? .green : .gray,
                                   symbol: model.working ? "bolt.fill" : "moon.fill")
                         }
                     }
-                    Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    Text(model.detail).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14))
             }
-            .padding(.horizontal, 16)
-
-            HStack(spacing: 10) {
-                stat("Agents", model.agents.isEmpty ? "None" : "\(model.agents.count) running", "terminal")
-                stat("Keep awake", model.keepAwake.title, "cup.and.saucer")
-                stat("Screensaver", model.idleMinutes == 0 ? "Never" : "After \(Int(model.idleMinutes)) min", "timer")
-            }
-            .padding(.horizontal, 16)
-
-            Button { model.showScreensaver() } label: {
-                Thumbnail(image: model.thumbnails[model.palette])
-                    .overlay(alignment: .bottomTrailing) {
-                        Label("Show now", systemImage: "play.fill")
-                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Capsule().fill(Accent.color)).padding(10)
-                    }
-            }
-            .buttonStyle(.plain)
-            .help("Show the screensaver now")
-            .padding(.horizontal, 16).padding(.bottom, 16)
-        }
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.08)))
     }
 
-    private var summary: String {
-        guard model.heard else { return "Waiting for the menu bar agent…" }
-        if model.session { return "The screensaver is up until you come back." }
-        if model.agents.isEmpty { return "No agents running. Open Mach Saver or press play to show the screensaver." }
-        return model.working
-            ? "\(model.agentSummary) working. The screensaver comes up after \(Int(model.idleMinutes)) min away."
-            : "\(model.agentSummary) open but idle, so your Mac can sleep."
-    }
-
-    private func stat(_ title: String, _ value: String, _ symbol: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 18)).foregroundStyle(Accent.color).frame(height: 22)
-            Text(value).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 10).padding(.horizontal, 6)
-        .frame(maxWidth: .infinity)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
-    }
-}
-
-// MARK: screensaver
-
-struct ScreensaverTab: View {
-    @EnvironmentObject var model: PanelModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(Palette.all, id: \.name) { p in
-                        tile(p)
-                            .onTapGesture { model.setPalette(p.name) }
-                            .onTapGesture(count: 2) { model.setPalette(p.name); model.showScreensaver() }
-                    }
+    private func swatch(_ p: Palette) -> some View {
+        let on = model.palette == p.name
+        let stops = (p.text ?? p.accent).map(\.color)
+        return Button { model.setPalette(p.name) } label: {
+            VStack(spacing: 5) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8).fill(p.background.color)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(LinearGradient(colors: stops, startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .padding(7)
                 }
-                .padding(.horizontal, 16).padding(.vertical, 2)
+                .frame(height: 34)
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(on ? Accent.color : Color.white.opacity(0.1), lineWidth: on ? 2 : 1))
+                Text(p.title).font(.system(size: 10, weight: on ? .bold : .medium))
+                    .foregroundStyle(on ? Color.primary : Color.secondary).lineLimit(1)
             }
-            .frame(height: 96)
-
-            Card {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text("Afterburner").font(.system(size: 17, weight: .bold))
-                        Badge(text: Palette.named(model.palette).title, color: Accent.color, symbol: "paintpalette.fill")
-                    }
-                    Text("MACH over the jet, playing one of \(TextEffects.Kind.allCases.count) text effects after another, like Omarchy's screensaver.")
-                        .font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            Thumbnail(image: model.thumbnails[model.palette])
-                .padding(.horizontal, 16)
-            Text("Click a colour to use it · double-click to show it now")
-                .font(.caption).foregroundStyle(.secondary)
-                .padding(.horizontal, 16).padding(.bottom, 12)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-    }
-
-    private func tile(_ p: Palette) -> some View {
-        let selected = model.palette == p.name
-        return VStack(spacing: 6) {
-            Thumbnail(image: model.thumbnails[p.name]).frame(width: 96, height: 60)
-            HStack(spacing: 4) {
-                if selected { Circle().fill(.green).frame(width: 6, height: 6) }
-                Text(p.title).font(.system(size: 10, weight: .medium)).lineLimit(1)
-            }
-        }
-        .padding(6)
-        .frame(width: 112, height: 90)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(selected ? 0.12 : 0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? Accent.color.opacity(0.9) : .clear, lineWidth: 2))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .buttonStyle(.plain)
     }
 }
 
@@ -427,50 +446,58 @@ struct ScreensaverTab: View {
 struct AgentsView: View {
     @EnvironmentObject var model: PanelModel
     @State private var draft = ""
-    private let columns = [GridItem(.adaptive(minimum: 120), spacing: 10)]
+    private let columns = [GridItem(.adaptive(minimum: 120), spacing: 8)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Card {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Agents").font(.system(size: 17, weight: .bold))
-                    Text("Programs that count as an agent. One counts as working while it and what it started use 4% or more of a core.")
-                        .font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(model.agentNames, id: \.self) { name in
-                        let running = model.agents.filter { $0 == name }.count
-                        HStack(spacing: 6) {
-                            Circle().fill(running > 0 ? (model.working ? Color.green : Color.gray) : Color.primary.opacity(0.15))
-                                .frame(width: 7, height: 7)
-                            Text(name).font(.system(size: 12, weight: .medium, design: .monospaced)).lineLimit(1)
-                            if running > 1 { Text("×\(running)").font(.system(size: 10)).foregroundStyle(.secondary) }
-                            Spacer(minLength: 0)
-                            Button { model.removeAgent(name) } label: {
-                                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain).help("Remove \(name)")
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 9)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
+        VStack(spacing: 12) {
+            PanelSection(title: "Right now") {
+                HStack(spacing: 10) {
+                    Image(systemName: model.working ? "bolt.fill" : model.agents.isEmpty ? "moon.zzz.fill" : "moon.fill")
+                        .font(.system(size: 18)).foregroundStyle(model.working ? Color.green : Color.secondary)
+                        .frame(width: 26)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.agents.isEmpty ? "No agents running" : "\(model.agentSummary) \(model.working ? "working" : "idle")")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Working means 4% or more of a core, counting the tools it starts.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 16)
             }
-
-            HStack(spacing: 8) {
-                TextField("Add a program name, e.g. claude", text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.addAgent(draft); draft = "" }
-                IconButton("plus", "Add", tint: Accent.color, filled: true) { model.addAgent(draft); draft = "" }
-                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            PanelSection(title: "Programs that count as agents") {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(model.agentNames, id: \.self) { chip($0) }
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                HStack(spacing: 8) {
+                    TextField("Add a program, e.g. claude", text: $draft)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { model.addAgent(draft); draft = "" }
+                    IconButton("plus", "Add", tint: Accent.color, filled: true) { model.addAgent(draft); draft = "" }
+                        .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    IconButton("arrow.counterclockwise", "Reset to the built-in list") { model.resetAgents() }
+                }
             }
-            .padding(.horizontal, 16).padding(.bottom, 16)
+            .frame(maxHeight: .infinity)
         }
+    }
+
+    private func chip(_ name: String) -> some View {
+        let running = model.agents.filter { $0 == name }.count
+        return HStack(spacing: 6) {
+            Circle().fill(running > 0 ? (model.working ? Color.green : Color.gray) : Color.primary.opacity(0.15))
+                .frame(width: 7, height: 7)
+            Text(name).font(.system(size: 12, weight: .medium, design: .monospaced)).lineLimit(1)
+            if running > 1 { Text("×\(running)").font(.system(size: 10)).foregroundStyle(.secondary) }
+            Spacer(minLength: 0)
+            Button { model.removeAgent(name) } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain).help("Remove \(name)")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.07)))
     }
 }
 
@@ -480,59 +507,51 @@ struct SettingsView: View {
     @EnvironmentObject var model: PanelModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                group("Keep awake") {
-                    row("Stay awake", "While agents work, always, or never (the screensaver still keeps the display on)") {
-                        Picker("", selection: Binding(get: { model.keepAwake }, set: { model.setKeepAwake($0) })) {
-                            ForEach(KeepAwake.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.menu).frame(width: 170)
-                    }
-                }
-                group("Screensaver") {
-                    row("Show after", "Minutes with no keyboard or mouse input while agents work") {
-                        Picker("", selection: Binding(get: { model.idleMinutes }, set: { model.setIdle($0) })) {
-                            ForEach([1.0, 2, 5, 10, 15, 0], id: \.self) { m in Text(m == 0 ? "Never" : "\(Int(m)) min").tag(m) }
-                        }
-                        .pickerStyle(.menu).frame(width: 110)
-                    }
-                    Divider().opacity(0.4)
-                    row("Colour", "Also on the Screensaver tab") {
-                        Picker("", selection: Binding(get: { model.palette }, set: { model.setPalette($0) })) {
-                            ForEach(Palette.all, id: \.name) { Text($0.title).tag($0.name) }
-                        }
-                        .pickerStyle(.menu).frame(width: 130)
-                    }
-                }
-                group("Startup") {
-                    row("Launch at login", "Sits in the menu bar; does nothing until an agent works") {
-                        Toggle("", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
-                    }
+        VStack(spacing: 12) {
+            PanelSection(title: "Startup") {
+                row("Launch at login", "Waits in the menu bar until an agent works") {
+                    Toggle("", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
+                        .toggleStyle(.switch).labelsHidden()
                 }
             }
-            .toggleStyle(.switch).labelsHidden()
-            .padding(.horizontal, 16).padding(.bottom, 16)
-        }
-    }
-
-    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 10, content: content)
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06)))
+            PanelSection(title: "Screensaver") {
+                row("Show it yourself", "Your AeroSpace binding runs `open -g mach-saver://show`") {
+                    Text("Super + |").font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.1)))
+                }
+                Divider().opacity(0.4)
+                row("Any key or mouse move", "Dismisses it and lets your Mac sleep as usual again") { EmptyView() }
+            }
+            PanelSection(title: "Mach Saver") {
+                HStack(spacing: 8) {
+                    wide("Lock Screen", "lock.fill") { model.lock() }
+                    wide("Quit", "power", tint: .red) { model.quit() }
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 
     private func row<Control: View>(_ title: String, _ detail: String, @ViewBuilder _ control: () -> Control) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer()
             control()
         }
+    }
+
+    private func wide(_ title: String, _ symbol: String, tint: Color = .primary, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.08)))
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
     }
 }

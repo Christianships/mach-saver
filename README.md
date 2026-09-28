@@ -25,8 +25,8 @@ make install          # build, copy to ~/Applications, link the mach-saver comma
 mach-saver show       # show the screensaver now
 ```
 
-Opening **Mach Saver** from Spotlight or Finder starts a session: it stays awake
-and shows the screensaver straight away.
+Click the flame in the menu bar (or open **Mach Saver** from Spotlight or
+Finder) for the panel; right-click the flame for the menu.
 
 ## Commands
 
@@ -39,16 +39,12 @@ and shows the screensaver straight away.
 | `mach-saver list` | List screensavers; `*` marks the active one |
 | `mach-saver use <name>` | Switch the active screensaver |
 
-The same things are in the flame menu, plus keep-awake mode, idle delay, lock
-screen, launch at login, and each screensaver's own settings.
-
-**Open Mach Saver…** in the flame menu brings up a floating panel (styled after
-[MouseSkins](https://github.com/Christianships/MouseSkins)): **Home** shows
-whether it's keeping you awake and why, with a live preview to show the
-screensaver now; **Screensaver** picks the colour from previews; **Agents**
-edits which programs count as agents; **Settings** has keep-awake, the idle
-delay and launch at login. The panel is its own short-lived process, so the
-menu bar app stays small; they talk over distributed notifications.
+The panel (styled after [MouseSkins](https://github.com/Christianships/MouseSkins))
+drops down from the flame. **Home** has the screensaver running live with
+whether it's keeping you awake and why, plus the colour, keep-awake mode and
+idle delay; **Agents** edits which programs count as agents; **Settings** has
+launch at login, lock and quit. The panel is its own short-lived process, so
+the menu bar app stays small; they talk over distributed notifications.
 
 In AeroSpace I bind it to Super+|:
 
@@ -58,10 +54,11 @@ ctrl-shift-backslash = 'exec-and-forget open -g mach-saver://show'
 
 ## How it decides
 
-It only steps in when you ask it to, or when an agent is doing work:
+The screensaver only comes up two ways:
 
-1. **You open it** (Spotlight, Finder, `mach-saver start`): the screensaver
-   comes up and your Mac stays awake until you come back and dismiss it.
+1. **You call it**: `mach-saver://show` (the AeroSpace binding above) or
+   `mach-saver show`/`start`. It stays up, and your Mac awake, until you come
+   back and dismiss it. Opening the app just opens the panel.
 2. **An agent is working and you've stepped away**: every 10 seconds it looks
    for processes started as one of `agentNames`
    (`defaults read com.christianaguilar.mach-saver agentNames`) and checks
