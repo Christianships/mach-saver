@@ -25,9 +25,10 @@ make install          # build, copy to ~/Applications, link the mach-saver comma
 mach-saver show       # show the screensaver now
 ```
 
-Click the jet in the menu bar (or open **Mach Saver** from Spotlight or
-Finder) for the panel; right-click it for the menu. The jet is solid while
-it's keeping your Mac awake.
+Click the jet in the menu bar for a quick menu: switch screensaver or colour in
+one click, or **Settings…** for the panel (opening **Mach Saver** from
+Spotlight or Finder opens the panel too). The jet is solid while it's keeping
+your Mac awake.
 
 ## Commands
 

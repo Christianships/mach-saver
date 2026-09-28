@@ -14,6 +14,21 @@ enum Menus {
         return i
     }
 
+    /// A small rounded swatch of a palette: its background with the text colours across it.
+    static func swatch(_ p: Palette) -> NSImage {
+        NSImage(size: NSSize(width: 16, height: 16), flipped: false) { r in
+            let box = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+            NSColor(cgColor: p.background.cg())?.setFill()
+            box.fill()
+            let colors = (p.text ?? p.accent).compactMap { NSColor(cgColor: $0.cg()) }
+            NSGradient(colors: colors)?.draw(in: NSBezierPath(roundedRect: r.insetBy(dx: 3.5, dy: 5), xRadius: 2, yRadius: 2), angle: 0)
+            NSColor.white.withAlphaComponent(0.25).setStroke()
+            box.lineWidth = 0.5
+            box.stroke()
+            return true
+        }
+    }
+
     static func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
         let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let m = NSMenu()

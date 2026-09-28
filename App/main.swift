@@ -28,10 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         Prefs.registerDefaults()
         menu.delegate = self
-        // Left click opens the panel; right click shows the menu.
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(statusItemClicked)
-        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // Clicking the icon shows the quick menu; Settings… in it opens the panel.
+        statusItem.menu = menu
         // The panel (its own process) asks for status when it opens and sends commands.
         Bus.observe(Bus.request) { [weak self] _ in self?.sentStatus = [:]; self?.update() }
         Bus.observe(Bus.command) { [weak self] info in
@@ -65,16 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         PanelProcess.open()
         return false
-    }
-
-    @objc private func statusItemClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp || NSApp.currentEvent?.modifierFlags.contains(.control) == true {
-            statusItem.menu = menu
-            statusItem.button?.performClick(nil)
-            statusItem.menu = nil       // detach so the next click comes back here
-            return
-        }
-        PanelProcess.toggle()
     }
 
     func applicationWillTerminate(_ note: Notification) {
@@ -181,44 +169,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Menu
 
+    /// The quick menu: switch screensaver or colour in one click; everything
+    /// else is in the panel (Settings…).
     func menuNeedsUpdate(_ menu: NSMenu) {
         update(scan: true)
         menu.removeAllItems()
+        menu.addItem(Menus.disabled(awake.isHeld ? "Keeping your Mac awake" : "Your Mac sleeps as usual"))
 
-        let counts = Dictionary(monitor.running.map { ($0, 1) }, uniquingKeysWith: +)
-        let summary = counts.isEmpty ? "No agent sessions"
-            : counts.sorted { $0.key < $1.key }.map { $0.value > 1 ? "\($0.key) ×\($0.value)" : $0.key }.joined(separator: ", ")
-            + (monitor.isWorking ? " (working)" : " (idle)")
-        menu.addItem(Menus.disabled("Mach Saver — \(summary)"))
-        menu.addItem(Menus.disabled(awake.isHeld ? "Keeping your Mac awake" : "Not keeping your Mac awake"))
+        let lib = Library.load()
         menu.addItem(.separator())
-        menu.addItem(Menus.item("Open Mach Saver…") { PanelProcess.open() })
-        menu.addItem(.separator())
-
-        let active = Screensavers.active
-        menu.addItem(Menus.submenu("Screensaver: \(active.title)",
-            Screensavers.all.map { s in Menus.item(s.title, checked: s.id == active.id) { Prefs.screensaver = s.id } }
-            + [.separator()] + active.options()))
-        menu.addItem(Menus.submenu("Keep Awake", KeepAwake.allCases.map { mode in
-            Menus.item(mode.title, checked: Prefs.keepAwake == mode) { Prefs.keepAwake = mode; self.update() }
-        }))
-        menu.addItem(Menus.submenu("Screensaver After", [1.0, 2, 5, 10, 15, 0].map { m in
-            Menus.item(m == 0 ? "Never" : "\(Int(m)) min", checked: Prefs.idleMinutes == m) { Prefs.idleMinutes = m }
-        }))
-        menu.addItem(.separator())
-
-        menu.addItem(Menus.item("Lock Screen") { ScreenLock.lockNow() })
-        menu.addItem(Menus.item("Launch at Login", checked: SMAppService.mainApp.status == .enabled) { self.toggleLoginItem() })
-        menu.addItem(Menus.item("Quit Mach Saver") { NSApp.terminate(nil) })
-    }
-
-    private func toggleLoginItem() {
-        do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
-            else { try SMAppService.mainApp.register() }
-        } catch {
-            NSAlert(error: error).runModal()
+        menu.addItem(NSMenuItem.sectionHeader(title: "Screensavers"))
+        for s in lib.savers {
+            let item = Menus.item(s.name, checked: s.id == lib.active) {
+                var l = Library.load(); l.active = s.id; l.save()
+            }
+            item.image = Menus.swatch(Palette.named(s.palette))
+            menu.addItem(item)
         }
+
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem.sectionHeader(title: "Colors"))
+        let current = lib.activeSaver.palette
+        for p in Palette.builtIn + lib.colorways.map(\.palette) {
+            let item = Menus.item(p.title, checked: p.name == current) {
+                var l = Library.load()
+                if let i = l.savers.firstIndex(where: { $0.id == l.active }) { l.savers[i].palette = p.name; l.save() }
+            }
+            item.image = Menus.swatch(p)
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        let settings = Menus.item("Settings…") { PanelProcess.open() }
+        settings.keyEquivalent = ","
+        menu.addItem(settings)
+        menu.addItem(Menus.item("Quit Mach Saver") { NSApp.terminate(nil) })
     }
 }
 

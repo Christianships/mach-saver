@@ -226,11 +226,6 @@ enum PanelProcess {
 
     static var isOpen: Bool { process?.isRunning == true }
 
-    /// Clicking the menu bar icon again closes it.
-    static func toggle() {
-        if isOpen { process?.terminate(); process = nil } else { open() }
-    }
-
     static func open() {
         guard !isOpen else { return }
         let p = Process()
