@@ -153,8 +153,9 @@ final class Afterburner: ScreensaverView {
         titleColors = (0..<Self.gradientSteps).flatMap { g in
             (0..<Self.titleLevels).map { l in
                 let v = Double(l) / Double(Self.titleLevels - 1)
-                let base = Palette.ramp(palette.accent, Double(g) / Double(Self.gradientSteps - 1))
-                return base.mix(palette.background, (1 - v) * 0.7).mix(RGB(255, 255, 255), max(0, v - 0.7) * 1.5).cg()
+                let base = Palette.ramp(palette.text ?? palette.accent, Double(g) / Double(Self.gradientSteps - 1))
+                // Full colour at rest; only the top level (flashes) goes white.
+                return base.mix(palette.background, (1 - v) * 0.7).mix(RGB(255, 255, 255), max(0, v - 0.86) / 0.14).cg()
             }
         }
         super.init(frame: frame)

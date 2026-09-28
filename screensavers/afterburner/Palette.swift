@@ -19,7 +19,8 @@ struct Palette {
     let title: String
     let background: RGB
     let fire: [RGB]     // cold -> hot
-    let accent: [RGB]   // MACH + logo gradient, top -> bottom
+    let accent: [RGB]   // logo gradient, top -> bottom
+    var text: [RGB]? = nil  // MACH gradient, left -> right; nil uses `accent`
 
     static func ramp(_ stops: [RGB], _ t: Double) -> RGB {
         let t = min(1, max(0, t)) * Double(stops.count - 1)
@@ -35,7 +36,9 @@ struct Palette {
                RGB(168, 85, 247), RGB(182, 112, 244), RGB(200, 138, 252), RGB(218, 166, 255),
                RGB(236, 196, 255), RGB(246, 228, 255), RGB(255, 255, 255)],
         accent: [RGB(236, 196, 255), RGB(218, 166, 255), RGB(200, 138, 252),
-                 RGB(182, 112, 244), RGB(164, 92, 234), RGB(146, 76, 222)])
+                 RGB(182, 112, 244), RGB(164, 92, 234), RGB(146, 76, 222)],
+        // Deeper than the jet, so MACH reads as solid violet over it.
+        text: [RGB(168, 85, 247), RGB(147, 51, 234), RGB(126, 34, 206), RGB(107, 33, 168)])
 
     static let classic = Palette(
         name: "classic", title: "Classic Fire",
