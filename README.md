@@ -25,8 +25,9 @@ make install          # build, copy to ~/Applications, link the mach-saver comma
 mach-saver show       # show the screensaver now
 ```
 
-Click the flame in the menu bar (or open **Mach Saver** from Spotlight or
-Finder) for the panel; right-click the flame for the menu.
+Click the jet in the menu bar (or open **Mach Saver** from Spotlight or
+Finder) for the panel; right-click it for the menu. The jet is solid while
+it's keeping your Mac awake.
 
 ## Commands
 
@@ -40,10 +41,9 @@ Finder) for the panel; right-click the flame for the menu.
 | `mach-saver use <name>` | Switch the active screensaver |
 
 The panel (styled after [MouseSkins](https://github.com/Christianships/MouseSkins))
-drops down from the flame. **Home** has the screensaver running live with
-whether it's keeping you awake and why, plus the colour, keep-awake mode and
-idle delay; **Agents** edits which programs count as agents; **Settings** has
-launch at login, lock and quit. The panel is its own short-lived process, so
+opens in the middle of the screen. **Home** has the screensaver running live,
+plus the colour, keep-awake mode and idle delay; **Settings** has launch at
+login, lock and quit. The panel is its own short-lived process, so
 the menu bar app stays small; they talk over distributed notifications.
 
 In AeroSpace I bind it to Super+|:

@@ -25,53 +25,35 @@ enum Bus {
 
 final class PanelModel: ObservableObject {
     enum Tab: String, CaseIterable {
-        case home = "Home", agents = "Agents", settings = "Settings"
+        case home = "Home", settings = "Settings"
         var symbol: String {
-            switch self { case .home: "house.fill"; case .agents: "terminal.fill"; case .settings: "gearshape.fill" }
+            switch self { case .home: "house.fill"; case .settings: "gearshape.fill" }
         }
     }
     @Published var tab: Tab = .home
 
     // From the agent.
-    @Published var agents: [String] = []
-    @Published var working = false
     @Published var awake = false
-    @Published var session = false
     @Published var heard = false
 
     // Settings, read and written straight through to the shared defaults.
     @Published var keepAwake = Prefs.keepAwake
     @Published var idleMinutes = Prefs.idleMinutes
     @Published var palette = Afterburner.Settings.palette
-    @Published var agentNames = Prefs.agentNames
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
 
     init() {
         Bus.observe(Bus.status) { [weak self] info in
             guard let self else { return }
-            agents = info["agents"] as? [String] ?? []
-            working = info["working"] as? Bool ?? false
             awake = info["awake"] as? Bool ?? false
-            session = info["session"] as? Bool ?? false
             heard = true
         }
         Bus.post(Bus.request)
     }
 
-    var agentSummary: String {
-        let counts = Dictionary(agents.map { ($0, 1) }, uniquingKeysWith: +)
-        return counts.sorted { $0.key < $1.key }.map { $0.value > 1 ? "\($0.key) ×\($0.value)" : $0.key }.joined(separator: ", ")
-    }
-
-    var headline: String { awake ? "Keeping your Mac awake" : "Your Mac sleeps as usual" }
-
-    var detail: String {
+    var headline: String {
         guard heard else { return "Connecting to the menu bar…" }
-        if session { return "Screensaver session on until you come back" }
-        if agents.isEmpty { return "No agents running" }
-        if !working { return "\(agentSummary) idle" }
-        return idleMinutes == 0 ? "\(agentSummary) working"
-            : "\(agentSummary) working · screensaver after \(Int(idleMinutes)) min away"
+        return awake ? "Keeping your Mac awake" : "Your Mac sleeps as usual"
     }
 
     // MARK: actions
@@ -89,14 +71,6 @@ final class PanelModel: ObservableObject {
     func setKeepAwake(_ m: KeepAwake) { keepAwake = m; Prefs.keepAwake = m; changed() }
     func setIdle(_ m: Double) { idleMinutes = m; Prefs.idleMinutes = m; changed() }
     func setPalette(_ name: String) { palette = name; Afterburner.Settings.palette = name }
-
-    func addAgent(_ raw: String) {
-        let name = raw.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, !agentNames.contains(name) else { return }
-        agentNames.append(name); Prefs.agentNames = agentNames; changed()
-    }
-    func removeAgent(_ name: String) { agentNames.removeAll { $0 == name }; Prefs.agentNames = agentNames; changed() }
-    func resetAgents() { Prefs.resetAgentNames(); agentNames = Prefs.agentNames; changed() }
 
     func setLogin(_ on: Bool) {
         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
@@ -121,11 +95,11 @@ final class FloatingPanel: NSPanel {
 }
 
 /// Like MouseSkins, the panel runs in its own short-lived process
-/// (`MachSaver --panel [--anchor x,y]`, started by the menu bar agent) and
-/// quits when it closes, so the agent that sits in the menu bar all day never
-/// loads SwiftUI. With an anchor it drops down from the menu bar icon.
+/// (`MachSaver --panel`, started by the menu bar agent) and quits when it
+/// closes, so the agent that sits in the menu bar all day never loads
+/// SwiftUI. It opens in the middle of the screen with the pointer.
 enum MachSaverPanel {
-    static let size = NSSize(width: 440, height: 596)
+    static let size = NSSize(width: 440, height: 640)
     private static var panel: FloatingPanel?
 
     static func show() {
@@ -135,7 +109,7 @@ enum MachSaverPanel {
         p.titleVisibility = .hidden
         p.titlebarAppearsTransparent = true
         p.isMovableByWindowBackground = true
-        p.level = .popUpMenu
+        p.level = .floating
         p.appearance = NSAppearance(named: .darkAqua)
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.isReleasedWhenClosed = false
@@ -161,29 +135,12 @@ enum MachSaverPanel {
             DispatchQueue.main.async { NSApp.terminate(nil) }
         }
         panel = p
-        p.setFrame(frame(), display: true)
-        NSApp.activate(ignoringOtherApps: true)
-        p.makeKeyAndOrderFront(nil)
-    }
-
-    /// Under the menu bar icon when the agent passed its position, else
-    /// centred on the screen with the pointer.
-    private static func frame() -> NSRect {
-        let args = CommandLine.arguments
-        if let i = args.firstIndex(of: "--anchor"), i + 1 < args.count {
-            let xy = args[i + 1].split(separator: ",").compactMap { Double($0) }
-            if xy.count == 2 {
-                let a = NSPoint(x: xy[0], y: xy[1])
-                let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: a.x, y: a.y - 1)) } ?? NSScreen.main
-                let vis = screen?.visibleFrame ?? .zero
-                var x = a.x - size.width / 2
-                x = min(max(x, vis.minX + 8), vis.maxX - size.width - 8)
-                return NSRect(x: x, y: a.y - 6 - size.height, width: size.width, height: size.height)
-            }
-        }
         let mouse = NSEvent.mouseLocation
         let f = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.visibleFrame ?? .zero
-        return NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2, width: size.width, height: size.height)
+        p.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2,
+                          width: size.width, height: size.height), display: true)
+        NSApp.activate(ignoringOtherApps: true)
+        p.makeKeyAndOrderFront(nil)
     }
 
     static func close() { panel?.close() }
@@ -195,16 +152,16 @@ enum PanelProcess {
 
     static var isOpen: Bool { process?.isRunning == true }
 
-    /// Clicking the menu bar icon again closes it, like a menu.
-    static func toggle(anchor: NSPoint? = nil) {
-        if isOpen { process?.terminate(); process = nil } else { open(anchor: anchor) }
+    /// Clicking the menu bar icon again closes it.
+    static func toggle() {
+        if isOpen { process?.terminate(); process = nil } else { open() }
     }
 
-    static func open(anchor: NSPoint? = nil) {
+    static func open() {
         guard !isOpen else { return }
         let p = Process()
         p.executableURL = Bundle.main.executableURL
-        p.arguments = ["--panel"] + (anchor.map { ["--anchor", "\($0.x),\($0.y)"] } ?? [])
+        p.arguments = ["--panel"]
         do { try p.run(); process = p } catch { NSSound.beep() }
     }
 }
@@ -230,7 +187,6 @@ struct PanelView: View {
             Group {
                 switch model.tab {
                 case .home: HomeView()
-                case .agents: AgentsView()
                 case .settings: SettingsView()
                 }
             }
@@ -248,13 +204,9 @@ struct PanelView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(LinearGradient(colors: [Accent.color, Accent.deep], startPoint: .topLeading, endPoint: .bottomTrailing))
-                Image(systemName: model.awake ? "flame.fill" : "flame")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-            }
-            .frame(width: 34, height: 34)
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable().interpolation(.high)
+                .frame(width: 42, height: 42)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Mach Saver").font(.system(size: 15, weight: .bold))
                 HStack(spacing: 5) {
@@ -310,21 +262,6 @@ struct IconButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
-    }
-}
-
-struct Badge: View {
-    let text: String, color: Color
-    var symbol: String? = nil
-    var body: some View {
-        HStack(spacing: 3) {
-            if let symbol { Image(systemName: symbol) }
-            Text(text)
-        }
-        .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(Color.white)
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .background(Capsule().fill(color))
     }
 }
 
@@ -399,22 +336,6 @@ struct HomeView: View {
         LivePreview(palette: model.palette)
             .frame(height: 200)
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(alignment: .bottomLeading) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        if model.session { Badge(text: "Session", color: Accent.color, symbol: "play.fill") }
-                        if !model.agents.isEmpty {
-                            Badge(text: model.working ? "Working" : "Idle", color: model.working ? .green : .gray,
-                                  symbol: model.working ? "bolt.fill" : "moon.fill")
-                        }
-                    }
-                    Text(model.detail).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14))
-            }
             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.08)))
     }
 
@@ -441,66 +362,6 @@ struct HomeView: View {
     }
 }
 
-// MARK: agents
-
-struct AgentsView: View {
-    @EnvironmentObject var model: PanelModel
-    @State private var draft = ""
-    private let columns = [GridItem(.adaptive(minimum: 120), spacing: 8)]
-
-    var body: some View {
-        VStack(spacing: 12) {
-            PanelSection(title: "Right now") {
-                HStack(spacing: 10) {
-                    Image(systemName: model.working ? "bolt.fill" : model.agents.isEmpty ? "moon.zzz.fill" : "moon.fill")
-                        .font(.system(size: 18)).foregroundStyle(model.working ? Color.green : Color.secondary)
-                        .frame(width: 26)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.agents.isEmpty ? "No agents running" : "\(model.agentSummary) \(model.working ? "working" : "idle")")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Working means 4% or more of a core, counting the tools it starts.")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            PanelSection(title: "Programs that count as agents") {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(model.agentNames, id: \.self) { chip($0) }
-                    }
-                }
-                .frame(maxHeight: .infinity)
-                HStack(spacing: 8) {
-                    TextField("Add a program, e.g. claude", text: $draft)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { model.addAgent(draft); draft = "" }
-                    IconButton("plus", "Add", tint: Accent.color, filled: true) { model.addAgent(draft); draft = "" }
-                        .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                    IconButton("arrow.counterclockwise", "Reset to the built-in list") { model.resetAgents() }
-                }
-            }
-            .frame(maxHeight: .infinity)
-        }
-    }
-
-    private func chip(_ name: String) -> some View {
-        let running = model.agents.filter { $0 == name }.count
-        return HStack(spacing: 6) {
-            Circle().fill(running > 0 ? (model.working ? Color.green : Color.gray) : Color.primary.opacity(0.15))
-                .frame(width: 7, height: 7)
-            Text(name).font(.system(size: 12, weight: .medium, design: .monospaced)).lineLimit(1)
-            if running > 1 { Text("×\(running)").font(.system(size: 10)).foregroundStyle(.secondary) }
-            Spacer(minLength: 0)
-            Button { model.removeAgent(name) } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain).help("Remove \(name)")
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.07)))
-    }
-}
-
 // MARK: settings
 
 struct SettingsView: View {
@@ -509,7 +370,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 12) {
             PanelSection(title: "Startup") {
-                row("Launch at login", "Waits in the menu bar until an agent works") {
+                row("Launch at login", "Waits in the menu bar until you need it") {
                     Toggle("", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                         .toggleStyle(.switch).labelsHidden()
                 }

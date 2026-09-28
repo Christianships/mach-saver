@@ -43,11 +43,5 @@ enum Prefs {
         set { d.set(newValue, forKey: "screensaver") }
     }
 
-    static var agentNames: [String] {
-        get { d.stringArray(forKey: "agentNames") ?? [] }
-        set { d.set(newValue, forKey: "agentNames") }
-    }
-
-    /// Back to the built-in list registered above.
-    static func resetAgentNames() { d.removeObject(forKey: "agentNames") }
+    static var agentNames: [String] { d.stringArray(forKey: "agentNames") ?? [] }
 }
