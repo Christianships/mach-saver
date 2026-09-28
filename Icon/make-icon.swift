@@ -1,5 +1,5 @@
-// Draws the app icon: the afterburner jet in purple dots on the screensaver's
-// dark background, with a soft glow and a highlight catching the wing.
+// Draws the app icon: the afterburner jet in deep purple dots on a dark violet
+// background, with a soft glow and a highlight catching the wing.
 // Usage: make icon  (renders Icon/AppIcon.iconset, then iconutil builds AppIcon.icns)
 import AppKit
 
@@ -23,8 +23,8 @@ let jetW = dots.map(\.x).max()! + 1, jetH = dots.map(\.y).max()! + 1
 func rgb(_ r: Double, _ g: Double, _ b: Double, _ a: Double = 1) -> CGColor {
     CGColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
 }
-// The screensaver's purple gradient, light at the top to deep at the bottom.
-let accent: [(Double, Double, Double)] = [(236, 196, 255), (218, 166, 255), (200, 138, 252), (182, 112, 244), (164, 92, 234), (146, 76, 222)]
+// Deep purple, light at the top of the jet to saturated violet at the bottom.
+let accent: [(Double, Double, Double)] = [(192, 132, 252), (168, 85, 247), (147, 51, 234), (126, 34, 206)]
 func ramp(_ t: Double) -> CGColor {
     let t = min(1, max(0, t)) * Double(accent.count - 1)
     let i = min(accent.count - 2, Int(t)), f = t - Double(i)
@@ -45,15 +45,15 @@ func render(_ px: Int) -> Data {
     let shape = CGPath(roundedRect: body, cornerWidth: 185, cornerHeight: 185, transform: nil)
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: 12), blur: 28, color: CGColor(gray: 0, alpha: 0.35))
-    ctx.addPath(shape); ctx.setFillColor(rgb(11, 7, 19)); ctx.fillPath()
+    ctx.addPath(shape); ctx.setFillColor(rgb(18, 6, 43)); ctx.fillPath()
     ctx.restoreGState()
 
     ctx.saveGState()
     ctx.addPath(shape); ctx.clip()
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
-    let bg = CGGradient(colorsSpace: space, colors: [rgb(34, 18, 58), rgb(11, 7, 19)] as CFArray, locations: [0, 1])!
+    let bg = CGGradient(colorsSpace: space, colors: [rgb(46, 16, 101), rgb(18, 6, 43)] as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(bg, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
-    let glow = CGGradient(colorsSpace: space, colors: [rgb(168, 85, 247, 0.5), rgb(168, 85, 247, 0)] as CFArray, locations: [0, 1])!
+    let glow = CGGradient(colorsSpace: space, colors: [rgb(124, 58, 237, 0.55), rgb(124, 58, 237, 0)] as CFArray, locations: [0, 1])!
     ctx.drawRadialGradient(glow, startCenter: CGPoint(x: 512, y: 520), startRadius: 0,
                            endCenter: CGPoint(x: 512, y: 520), endRadius: 420, options: [])
 
@@ -78,7 +78,7 @@ func render(_ px: Int) -> Data {
 
     // A thin inner rim so the dark icon doesn't vanish on dark backgrounds.
     ctx.addPath(CGPath(roundedRect: body.insetBy(dx: 3, dy: 3), cornerWidth: 182, cornerHeight: 182, transform: nil))
-    ctx.setStrokeColor(rgb(200, 138, 252, 0.35)); ctx.setLineWidth(6); ctx.strokePath()
+    ctx.setStrokeColor(rgb(147, 51, 234, 0.45)); ctx.setLineWidth(6); ctx.strokePath()
 
     let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
     return rep.representation(using: .png, properties: [:])!
