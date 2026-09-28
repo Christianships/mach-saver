@@ -6,11 +6,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private let awake = Awake()
     private let saver = SaverController()
-    private var agents: [String] = []
+    private let monitor = AgentMonitor()
     private var lastScan: CFTimeInterval = 0
     private var tick: Timer?
-    /// A manual session: stay awake and show the screensaver until ended, agents or not.
+    private var shownIcon: Bool?
+    /// A manual session (opening the app): stay awake with the screensaver up,
+    /// agents or not, until you come back and dismiss it.
     private var sessionActive = false
+
+    /// How often to check on things: every second while the screensaver is up
+    /// (to notice input), otherwise every 5s. Agents are scanned every 10s.
+    private static let busyTick = 1.0, idleTick = 5.0, scanEvery = 10.0
 
     func applicationWillFinishLaunching(_ note: Notification) {
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
@@ -22,8 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Prefs.registerDefaults()
         menu.delegate = self
         statusItem.menu = menu
+        saver.onUserDismiss = { [weak self] in
+            self?.sessionActive = false
+            self?.update()
+        }
         update(scan: true)
-        tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.update() }
 
         // Opening the app yourself starts a session. Launching at login, from a
         // mach-saver:// link, or with --background just puts it in the menu bar.
@@ -51,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var shouldStayAwake: Bool {
         if sessionActive { return true }
         return switch Prefs.keepAwake {
-        case .automatic: !agents.isEmpty
+        case .automatic: monitor.isWorking
         case .always: true
         case .off: false
         }
@@ -59,29 +68,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func update(scan: Bool = false) {
         let now = CACurrentMediaTime()
-        if scan || now - lastScan >= 4 {
-            agents = Agents.running(named: Set(Prefs.agentNames))
+        if scan || now - lastScan >= Self.scanEvery - 0.5 {
+            monitor.scan(names: Set(Prefs.agentNames))
             lastScan = now
         }
         let stayAwake = shouldStayAwake
         // Anything on screen keeps the display on, even a one-off `show`.
         awake.hold(stayAwake || saver.isShowing)
-        statusItem.button?.image = NSImage(systemSymbolName: awake.isHeld ? "flame.fill" : "flame",
-                                           accessibilityDescription: "Mach Saver")
+        if shownIcon != awake.isHeld {
+            shownIcon = awake.isHeld
+            statusItem.button?.image = NSImage(systemSymbolName: awake.isHeld ? "flame.fill" : "flame",
+                                               accessibilityDescription: "Mach Saver")
+        }
+        defer { schedule() }
 
         if saver.isShowing {
             if !stayAwake && !saver.isPreview {
                 // Agents finished: step aside so macOS can sleep and lock as normal.
                 saver.dismiss()
-            } else if saver.shownFor > 1.5 && Idle.seconds < 0.5 {
+            } else if saver.shownFor > 1.5 && Idle.seconds < 1.5 {
                 // Input the event monitors can't see (e.g. keys while another app has focus).
                 saver.dismiss()
+                sessionActive = false
             } else {
                 awake.nudge()
             }
         } else if stayAwake, Prefs.idleMinutes > 0, Idle.seconds >= Prefs.idleMinutes * 60 {
             saver.show()
         }
+    }
+
+    /// Re-arms the timer when the pace should change. The tolerance lets macOS
+    /// batch our wake-ups with others.
+    private func schedule() {
+        let interval = saver.isShowing ? Self.busyTick : Self.idleTick
+        guard tick?.timeInterval != interval else { return }
+        tick?.invalidate()
+        let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.update() }
+        t.tolerance = interval * 0.2
+        RunLoop.main.add(t, forMode: .common)
+        tick = t
     }
 
     // MARK: - Sessions
@@ -125,16 +151,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         update(scan: true)
         menu.removeAllItems()
 
-        let counts = Dictionary(agents.map { ($0, 1) }, uniquingKeysWith: +)
+        let counts = Dictionary(monitor.running.map { ($0, 1) }, uniquingKeysWith: +)
         let summary = counts.isEmpty ? "No agent sessions"
             : counts.sorted { $0.key < $1.key }.map { $0.value > 1 ? "\($0.key) ×\($0.value)" : $0.key }.joined(separator: ", ")
+            + (monitor.isWorking ? " (working)" : " (idle)")
         menu.addItem(Menus.disabled("Mach Saver — \(summary)"))
         menu.addItem(Menus.disabled(awake.isHeld ? "Keeping your Mac awake" : "Not keeping your Mac awake"))
         menu.addItem(.separator())
-        menu.addItem(sessionActive
-            ? Menus.item("End Session") { self.endSession() }
-            : Menus.item("Start Session (Stay Awake + Screensaver)") { self.startSession() })
-        menu.addItem(Menus.item("Show Screensaver") { self.show() })
+        menu.addItem(Menus.item("Show Screensaver") { self.startSession() })
         menu.addItem(.separator())
 
         let active = Screensavers.active

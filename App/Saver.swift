@@ -13,6 +13,8 @@ final class SaverController {
     private var previousApp: NSRunningApplication?
 
     private(set) var isPreview = false
+    /// Called when real input dismisses the screensaver (not when the app hides it).
+    var onUserDismiss: (() -> Void)?
     var isShowing: Bool { !windows.isEmpty }
     var shownFor: CFTimeInterval { CACurrentMediaTime() - shownAt }
 
@@ -62,6 +64,7 @@ final class SaverController {
             guard hypot(p.x - mouseStart.x, p.y - mouseStart.y) > 12 else { return }
         }
         dismiss()
+        onUserDismiss?()
     }
 
     func dismiss() {

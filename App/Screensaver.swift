@@ -2,10 +2,11 @@ import AppKit
 import QuartzCore
 
 /// Base class for a screensaver scene. Subclasses override `advance(_:)` to step
-/// the animation and `draw(_:)` to render it; the view ticks itself at 30fps
-/// while it's in a window.
+/// the animation and `draw(_:)` to render it. The view ticks itself at up to
+/// 30fps from the display's own refresh while it's in a window, so it stops
+/// drawing on its own when the display sleeps or the window is covered.
 class ScreensaverView: NSView {
-    private var timer: Timer?
+    private var link: CADisplayLink?
     private var lastTime = CACurrentMediaTime()
 
     override var isOpaque: Bool { true }
@@ -19,22 +20,24 @@ class ScreensaverView: NSView {
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard link == nil else { return }
         lastTime = CACurrentMediaTime()
-        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let now = CACurrentMediaTime()
-            self.advance(min(0.1, now - self.lastTime))
-            self.lastTime = now
-            self.needsDisplay = true
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        let l = displayLink(target: self, selector: #selector(step(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    @objc private func step(_ l: CADisplayLink) {
+        let now = CACurrentMediaTime()
+        advance(min(0.1, now - lastTime))
+        lastTime = now
+        needsDisplay = true
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        link?.invalidate()
+        link = nil
     }
 }
 
