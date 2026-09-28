@@ -161,8 +161,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "stop": endSession()
         case "toggle": sessionActive ? endSession() : startSession()
         case "use":
-            let id = url.lastPathComponent
-            if Screensavers.all.contains(where: { $0.id == id }) { Prefs.screensaver = id }
+            // A saved screensaver, by name (any case) or id.
+            let want = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+            var lib = Library.load()
+            if let s = lib.savers.first(where: { $0.name.lowercased() == want.lowercased() || $0.id == want }) {
+                lib.active = s.id
+                lib.save()
+            }
         default: break
         }
     }
@@ -233,7 +238,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot") {
     exit(0)
 }
 if CommandLine.arguments.contains("--list") {
-    for s in Screensavers.all { print("\(s.id == Screensavers.active.id ? "*" : " ") \(s.id)") }
+    let lib = Library.load()
+    for s in lib.savers { print("\(s.id == lib.active ? "*" : " ") \(s.name)  (\(s.text), \(Palette.named(s.palette).title))") }
     exit(0)
 }
 
