@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if stayAwake, Prefs.idleMinutes > 0, Idle.seconds >= Prefs.idleMinutes * 60 {
             saver.show()
         }
+        if !saver.isShowing { awake.endNudges() }
     }
 
     /// Re-arms the timer when the pace should change. The tolerance lets macOS

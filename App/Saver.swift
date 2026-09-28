@@ -69,9 +69,13 @@ final class SaverController {
 
     func dismiss() {
         guard isShowing else { return }
+        // Close, don't just hide: a hidden window keeps its full-screen
+        // backing buffers (tens of MB per display) until the app quits.
         for w in windows {
             (w.contentView as? ScreensaverView)?.stop()
+            w.contentView = nil
             w.orderOut(nil)
+            w.close()
         }
         windows.removeAll()
         monitors.forEach(NSEvent.removeMonitor)

@@ -133,6 +133,14 @@ final class Awake {
     func nudge() {
         IOPMAssertionDeclareUserActivity("Mach screensaver" as CFString, kIOPMUserActiveLocal, &activity)
     }
+
+    /// Drops the "user is active" claim once the screensaver is gone, so the
+    /// idle timer counts from your real last input again.
+    func endNudges() {
+        guard activity != 0 else { return }
+        IOPMAssertionRelease(activity)
+        activity = 0
+    }
 }
 
 enum Idle {
