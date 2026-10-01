@@ -99,11 +99,13 @@ panel (or Ctrl-Cmd-Q) when you walk away.
 ## Resource use
 
 - **In the menu bar:** checks in every 5 seconds and scans agents every 10
-  (about 2 ms a scan; each process's arguments are read once). Near 0% CPU.
-- **Screensaver up:** draws from the display's refresh at up to 30fps (about
-  2.5 ms a frame) and stops drawing when the display sleeps. Its full-screen
-  windows are closed, not just hidden, when you come back, so their memory is
-  freed.
+  (about 2 ms a scan; each process's arguments are read once). Near 0% CPU,
+  about 10 MB.
+- **Screensaver up:** runs as its own process (`MachSaver --saver`) that draws
+  from the display's refresh at up to 30fps (about 2.5 ms a frame), stops
+  drawing when the display sleeps, and quits when you come back. Core Animation
+  keeps a full-screen frame (40+ MB) cached for as long as the process that drew
+  it lives, so drawing in the menu bar app would have left that behind for good.
 - **The panel** is its own short-lived process (`MachSaver --panel`) that
   quits when it closes, so the menu bar app never loads SwiftUI. The two talk
   over distributed notifications.

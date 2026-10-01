@@ -85,3 +85,63 @@ final class SaverController {
         previousApp = nil
     }
 }
+
+/// Runs the screensaver as its own `--saver` process, so the menu bar agent
+/// never draws full screen. Core Animation keeps a full-screen frame cached
+/// (40+ MB) for the life of whichever process drew it; this way it goes away
+/// with the screensaver instead of staying in the agent.
+final class SaverProcess {
+    private var process: Process?
+    private var shownAt: CFTimeInterval = 0
+
+    private(set) var isPreview = false
+    /// Called when real input dismisses the screensaver (not when the app hides it).
+    var onUserDismiss: (() -> Void)?
+    var isShowing: Bool { process != nil }
+    var shownFor: CFTimeInterval { CACurrentMediaTime() - shownAt }
+
+    func show(preview: Bool = false) {
+        guard !isShowing else { return }
+        let p = Process()
+        p.executableURL = Bundle.main.executableURL
+        p.arguments = ["--saver"] + (preview ? ["--preview"] : [])
+        // The child exits by itself only when you dismiss it; our own dismiss() forgets it first.
+        p.terminationHandler = { [weak self] ended in
+            DispatchQueue.main.async {
+                guard let self, self.process === ended else { return }
+                self.process = nil
+                self.onUserDismiss?()
+            }
+        }
+        do { try p.run() } catch { NSSound.beep(); return }
+        process = p
+        isPreview = preview
+        shownAt = CACurrentMediaTime()
+    }
+
+    func dismiss() {
+        guard let p = process else { return }
+        process = nil
+        p.terminate()
+    }
+}
+
+/// `MachSaver --saver [--preview]`: shows the screensaver and exits when it's
+/// dismissed, by input or by SIGTERM from the agent.
+func runSaverProcess(preview: Bool) -> Never {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let saver = SaverController()
+    saver.onUserDismiss = { exit(0) }
+    signal(SIGTERM, SIG_IGN)
+    let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    term.setEventHandler { saver.dismiss(); exit(0) }
+    term.resume()
+    // Never outlive the agent, or the screen would stay covered.
+    let parent = DispatchSource.makeProcessSource(identifier: getppid(), eventMask: .exit, queue: .main)
+    parent.setEventHandler { saver.dismiss(); exit(0) }
+    parent.resume()
+    DispatchQueue.main.async { saver.show(preview: preview) }
+    app.run()
+    exit(0)
+}

@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private let awake = Awake()
-    private let saver = SaverController()
+    private let saver = SaverProcess()
     private let monitor = AgentMonitor()
     private var lastScan: CFTimeInterval = 0
     private var tick: Timer?
@@ -232,6 +232,9 @@ if CommandLine.arguments.contains("--panel") {
     DispatchQueue.main.async { MachSaverPanel.show() }
     app.run()
     exit(0)
+}
+if CommandLine.arguments.contains("--saver") {
+    runSaverProcess(preview: CommandLine.arguments.contains("--preview"))
 }
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot") {
     snapshot(Array(CommandLine.arguments[(i + 1)...]))
