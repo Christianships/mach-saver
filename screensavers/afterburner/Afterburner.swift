@@ -169,7 +169,7 @@ final class Afterburner: ScreensaverView {
         logoOrigin = CGPoint(x: (W - logoSize.width) / 2, y: (H + logoSize.height) / 2)
         let machCols = CGFloat(title.map(\.count).max() ?? 1), machRows = CGFloat(title.count)
         let probe = GlyphFont(size: 20)
-        let k = min(W * 0.2 / (machCols * probe.advance), H * 0.07 / (machRows * probe.lineHeight))
+        let k = min(W * 0.8 / (machCols * probe.advance), H * 0.28 / (machRows * probe.lineHeight))
         titleFont = GlyphFont(size: max(4, (20 * k).rounded()))
         let machW = machCols * titleFont.advance, machH = machRows * titleFont.lineHeight
         // MACH tucked into the bottom-right corner, the jet alone in the middle.
