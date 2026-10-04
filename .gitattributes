@@ -1,0 +1,4 @@
+# The Download .zip carries only what building Mach Saver needs.
+/docs export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
